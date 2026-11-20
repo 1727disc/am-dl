@@ -1,9 +1,9 @@
 package app
 
 import (
+	"amdl/internal/amp-api"
 	"fmt"
 	"github.com/AlecAivazis/survey/v2"
-	"amdl/internal/amp-api"
 	"strings"
 )
 
@@ -13,6 +13,17 @@ type SearchResultItem struct {
 	Detail string
 	URL    string
 	ID     string
+}
+
+func searchTitle(name, rating string) string {
+	switch rating {
+	case "explicit":
+		return name + " [E]"
+	case "clean":
+		return name + " [C]"
+	default:
+		return name
+	}
 }
 
 // QualityOption holds information about a downloadable quality.
@@ -122,7 +133,7 @@ func (r *Runner) handleSearch(searchType string, queryParts []string, token stri
 					}
 					trackInfo := fmt.Sprintf("%d tracks", item.Attributes.TrackCount)
 					detail := fmt.Sprintf("%s (%s, %s)", item.Attributes.ArtistName, year, trackInfo)
-					displayOptions = append(displayOptions, fmt.Sprintf("%s - %s", item.Attributes.Name, detail))
+					displayOptions = append(displayOptions, fmt.Sprintf("%s - %s", searchTitle(item.Attributes.Name, item.Attributes.ContentRating), detail))
 					items = append(items, SearchResultItem{Type: "Album", URL: item.Attributes.URL, ID: item.ID})
 				}
 				hasNext = searchResp.Results.Albums.Next != ""
@@ -131,7 +142,7 @@ func (r *Runner) handleSearch(searchType string, queryParts []string, token stri
 			if searchResp.Results.Songs != nil {
 				for _, item := range searchResp.Results.Songs.Data {
 					detail := fmt.Sprintf("%s (%s)", item.Attributes.ArtistName, item.Attributes.AlbumName)
-					displayOptions = append(displayOptions, fmt.Sprintf("%s - %s", item.Attributes.Name, detail))
+					displayOptions = append(displayOptions, fmt.Sprintf("%s - %s", searchTitle(item.Attributes.Name, item.Attributes.ContentRating), detail))
 					items = append(items, SearchResultItem{Type: "Song", URL: item.Attributes.URL, ID: item.ID})
 				}
 				hasNext = searchResp.Results.Songs.Next != ""

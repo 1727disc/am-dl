@@ -34,9 +34,16 @@ type State struct {
 }
 
 type Runner struct {
-	Config config.ConfigSet
-	Flags  Flags
-	State  State
+	Config              config.ConfigSet
+	Flags               Flags
+	State               State
+	artistVideoAttempts map[artistVideoAttempt]bool
+}
+
+type artistVideoAttempt struct {
+	directory  string
+	storefront string
+	artistID   string
 }
 
 func NewRunner(cfg config.ConfigSet) *Runner {

@@ -1,4 +1,4 @@
-# Apple Music ALAC / Dolby Atmos Downloader
+# Apple Music Downloader
 
 [English](./README.md) | [简体中文](./README-CN.md) | [Cloud Server / Proxy Setup](./PROXY-SETUP.md)
 
@@ -19,13 +19,14 @@ This command-line tool downloads albums, songs, playlists, stations and music vi
 - [For Developers](#for-developers)
 - [Get media-user-token](#get-media-user-token)
 - [Lyrics options](#lyrics-options)
+- [Asset downloads](#artist-and-album-asset-downloads)
 - [Credits](#credits)
 
 ## Features
 
-1. Inline cover art and LRC lyrics.
-2. Word-by-word and unsynchronized lyrics.
-3. Artist album downloads.
+1. Inline cover art and LRC/TTML lyrics.
+2. Word-by-word, line-by-line, and unsynchronized lyrics.
+3. Artist and album asset downloads.
 4. Streaming download and decryption for large files.
 5. Music-video downloads using in-process mp4ff decryption.
 6. Interactive search and track selection.
@@ -48,14 +49,16 @@ Stations require a valid `media-user-token` from an active subscription.
 
 Install and prepare these before running the downloader:
 
-1. **wrapper-lite**: [github.com/WorldObservationLog/wrapper/tree/lite](https://github.com/WorldObservationLog/wrapper/tree/lite). Required backend decryption service. Start it before using this downloader and set its HTTP endpoint in `lite-server`, for example `http://127.0.0.1:12340`.
+1. **wrapper-lite**: [github.com/1727disc/wrapper/tree/development](https://github.com/1727disc/wrapper/tree/development). Required backend decryption service. Start it before using this downloader and set its HTTP endpoint in `lite-server`, for example `http://127.0.0.1:12340`.
 2. **ffmpeg** (Optional): Required only for post-download conversion, animated artwork, or `ffmpeg`-dependent features. See [ffmpeg.org](https://ffmpeg.org/).
 
-> **Note**: If you are using the precompiled release binaries, **Go is NOT required**. Go (1.23.1+) is only needed if you build from source (see [For Developers](#for-developers)).
+3. **Go 1.23.1 or newer**: [go.dev/dl](https://go.dev/dl/) (required when building from source).
 
 ## Quick Start
 
-Download the precompiled binary for your operating system and architecture from the [latest GitHub Releases](https://github.com/zhaarey/apple-music-downloader/releases/latest):
+> Precompiled downloads become available after the first successful release of this fork. To build from source, see [For Developers](#for-developers).
+
+Download the precompiled binary for your operating system and architecture from the [latest GitHub Releases](https://github.com/1727disc/am-dl/releases/latest):
 
 | Platform | Architecture | Precompiled Binary |
 |---|---|---|
@@ -75,7 +78,7 @@ Download the precompiled binary for your operating system and architecture from 
 
 ```powershell
 # Download precompiled binary (example for 64-bit Windows)
-Invoke-WebRequest -Uri "https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_windows_amd64.exe" -OutFile "amdl.exe"
+Invoke-WebRequest -Uri "https://github.com/1727disc/am-dl/releases/latest/download/amdl_windows_amd64.exe" -OutFile "amdl.exe"
 ```
 
 2. Run `amdl.exe` once to automatically generate the default `config.yaml`:
@@ -105,10 +108,10 @@ Example:
 
 ```bash
 # For Apple Silicon (M-series):
-curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_darwin_arm64
+curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_darwin_arm64
 
 # For Intel Macs:
-# curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_darwin_amd64
+# curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_darwin_amd64
 
 # Grant execution permission
 chmod +x amdl
@@ -140,10 +143,10 @@ chmod +x amdl
 
 ```bash
 # For x86_64 / amd64:
-curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_linux_amd64
+curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_linux_amd64
 
 # For ARM64:
-# curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_linux_arm64
+# curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_linux_arm64
 
 # Grant execution permission
 chmod +x amdl
@@ -184,7 +187,7 @@ termux-setup-storage
 3. Download precompiled binary:
 
 ```bash
-curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_android_arm64
+curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_android_arm64
 chmod +x amdl
 ```
 
@@ -218,7 +221,7 @@ paths:
 
 ## Docker
 
-A multi-arch image (`linux/amd64`, `linux/arm64`, ffmpeg included) is published to GHCR on every release: `ghcr.io/zhaarey/apple-music-downloader`. Tags: `latest`, `<major>.<minor>`, and the exact version (prereleases only get the exact version).
+After a successful release, a multi-arch image (`linux/amd64`, `linux/arm64`, ffmpeg included) is published to GHCR at `ghcr.io/1727disc/am-dl`. Tags: `latest`, `<major>.<minor>`, and the exact version (prereleases only get the exact version).
 
 `/data` is the working directory inside the container: `config.yaml` is created there on first run and all download folders (`AM-Lossless`, ...) end up there too.
 
@@ -245,7 +248,7 @@ If wrapper-lite already runs somewhere else:
 docker run --rm -it --user "$(id -u):$(id -g)" \
   -v "$PWD/data:/data" \
   -e AMDL_LITE_SERVER=http://192.168.1.10:12340 \
-  ghcr.io/zhaarey/apple-music-downloader:latest \
+  ghcr.io/1727disc/am-dl:latest \
   "https://music.apple.com/us/album/..."
 ```
 
@@ -390,11 +393,28 @@ metadata:
 > - Set `general.language` in `config.yaml` (e.g. `"en-US"`, `"zh-Hans-CN"`, `"ja"`) to control the target language for translated lyrics.
 > - `extra`: set to `"translation"` for translated lyrics or `"pronunciation"` for phonetic/romanized lyrics (when provided by Apple Music).
 
+## Artist and album asset downloads
+
+`save-artist-extras` saves an artist's logo, color, and about section. `save-album-extras` saves an album's track list with date, length, and popularity information (when available). Animated preview frames are saved when both `save-album/artist-animated` and `save-album/artist-extras` are enabled.
+
+Configure extras settings under `metadata.extras` in `config.yaml`:
+
+```yaml
+metadata:
+  extras:
+    save-album-extras: true               # Save album animated previews, track list information, and embed song credits.
+    save-artist-extras: true              # Save artist animated previews, logo, color, and about information.
+
+  artwork:
+    save-album-animated: true
+    save-artist-animated: true
+```
+
 ## Upgrade
 
 ### Built-in Self Update (Recommended)
 
-Upgrade to the latest official release with automatic checksum verification and interactive configuration migration:
+Upgrade to the latest release from this fork with automatic checksum verification and interactive configuration migration:
 
 ```bash
 # Check and perform self-update with interactive config migration
@@ -424,7 +444,7 @@ On Windows PowerShell:
 
 ### Manual Binary Update
 
-Download the latest precompiled executable from [GitHub Releases](https://github.com/zhaarey/apple-music-downloader/releases/latest) and replace your current `amdl` / `amdl.exe` binary.
+Download the latest precompiled executable from [GitHub Releases](https://github.com/1727disc/am-dl/releases/latest) and replace your current `amdl` / `amdl.exe` binary.
 
 > For developers building from source, see [For Developers](#for-developers).
 
@@ -443,8 +463,8 @@ If you want to contribute, modify the code, or build the downloader from source:
 **macOS / Linux**:
 
 ```bash
-git clone https://github.com/zhaarey/apple-music-downloader.git
-cd apple-music-downloader
+git clone https://github.com/1727disc/am-dl.git
+cd am-dl
 cp config.yaml.example config.yaml
 go build -o amdl .
 ./amdl --help
@@ -453,8 +473,8 @@ go build -o amdl .
 **Windows (PowerShell)**:
 
 ```powershell
-git clone https://github.com/zhaarey/apple-music-downloader.git
-cd apple-music-downloader
+git clone https://github.com/1727disc/am-dl.git
+cd am-dl
 copy config.yaml.example config.yaml
 go build -o amdl.exe .
 .\amdl.exe --help
@@ -482,7 +502,7 @@ go build -o amdl.exe .
 
 ### Releasing
 
-Releases are driven by the `VERSION` file. When a push to `main` carries a `VERSION` whose `v<VERSION>` tag does not exist yet, the Release workflow builds every platform and publishes a GitHub Release with that tag. To cut a release, bump `VERSION` (e.g. `0.1.0` → `0.1.1`) and merge it into `main`. A version with a suffix such as `0.2.0-beta.1` is published as a pre-release.
+Releases are driven by the `VERSION` file. When a push to `development` carries a `VERSION` whose `v<VERSION>` tag does not exist yet, the Release workflow builds every platform and publishes a GitHub Release with that tag. To cut a release, bump `VERSION` (e.g. `0.1.0` → `0.1.1`) and push it to `development`. A version with a suffix such as `0.2.0-beta.1` is published as a pre-release.
 
 Release binaries self-update from the repository that built them, so a fork's releases update from the fork.
 

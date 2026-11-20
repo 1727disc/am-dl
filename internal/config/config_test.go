@@ -38,8 +38,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Paths.ArtistFolder != "{UrlArtistName}" {
 		t.Errorf("Paths.ArtistFolder = %q, want '{UrlArtistName}'", cfg.Paths.ArtistFolder)
 	}
-	if cfg.Paths.SongFile != "{SongNumer}. {SongName}" {
-		t.Errorf("Paths.SongFile = %q, want '{SongNumer}. {SongName}'", cfg.Paths.SongFile)
+	if cfg.Paths.SongFile != "{SongNumber}. {SongName}" {
+		t.Errorf("Paths.SongFile = %q, want '{SongNumber}. {SongName}'", cfg.Paths.SongFile)
 	}
 	if cfg.Paths.LimitMax != 200 {
 		t.Errorf("Paths.LimitMax = %d, want 200", cfg.Paths.LimitMax)
@@ -429,4 +429,3 @@ func TestCustomConfigMissingDoesNotAutoCreate(t *testing.T) {
 		t.Errorf("Custom config file %s should not have been created", customFile)
 	}
 }
-

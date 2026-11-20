@@ -1,11 +1,7 @@
 name: Docker
 
-# Publishes a multi-arch image to GHCR for every version tag. release.yml calls
-# this workflow directly, because tags it creates with GITHUB_TOKEN do not
-# trigger the tag push event below.
+# Publishes a multi-arch image for releases initiated from development.
 on:
-  push:
-    tags: [ "v*" ]
   workflow_call:
     inputs:
       tag:
@@ -25,6 +21,7 @@ permissions:
 
 jobs:
   image:
+    if: github.ref == 'refs/heads/development'
     name: Build and push image
     runs-on: ubuntu-latest
     env:
@@ -82,7 +79,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Self-update and the binary's version info follow whichever repository built it.
           build-args: |
             VERSION=${{ env.TAG }}
             COMMIT=${{ steps.info.outputs.commit }}

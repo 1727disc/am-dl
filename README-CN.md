@@ -19,6 +19,7 @@
 - [开发者指南](#开发者指南)
 - [获取 media-user-token](#获取-media-user-token)
 - [歌词设置](#歌词设置)
+- [歌手和专辑素材下载](#歌手和专辑素材下载)
 - [致谢](#致谢)
 
 ## 功能特性
@@ -29,6 +30,7 @@
 4. 大文件流式下载和解密。
 5. 音乐视频下载，使用进程内 mp4ff 解密。
 6. 交互式搜索和曲目选择。
+7. 歌手和专辑素材下载。
 
 ## 支持的格式
 
@@ -48,14 +50,16 @@
 
 运行前必须准备：
 
-1. **wrapper-lite**：[github.com/WorldObservationLog/wrapper/tree/lite](https://github.com/WorldObservationLog/wrapper/tree/lite)。必需的后端解密服务。必须先启动它，并在 `lite-server` 中写入其 HTTP 地址，例如 `http://127.0.0.1:12340`。
+1. **wrapper-lite**：[github.com/1727disc/wrapper/tree/development](https://github.com/1727disc/wrapper/tree/development)。必需的后端解密服务。必须先启动它，并在 `lite-server` 中写入其 HTTP 地址，例如 `http://127.0.0.1:12340`。
 2. **ffmpeg**（可选）：仅在后下载转换、动态封面或依赖 ffmpeg 的功能中需要。见 [ffmpeg.org](https://ffmpeg.org/)。
 
-> **提示**：直接使用 Release 预编译二进制文件**不需要安装 Go**。只有自行从源码编译时才需要 Go 1.23.1+（见 [开发者指南](#开发者指南)）。
+3. **Go 1.23.1 或更新版本**：[go.dev/dl](https://go.dev/dl/)（从源码构建时需要）。
 
 ## 快速开始
 
-从 [最新 GitHub Releases](https://github.com/zhaarey/apple-music-downloader/releases/latest) 下载适合你系统和架构的预编译二进制文件：
+> 此分支首次成功发布后，预编译下载文件才会可用。从源码构建请参阅[开发者指南](#开发者指南)。
+
+从 [最新 GitHub Releases](https://github.com/1727disc/am-dl/releases/latest) 下载适合你系统和架构的预编译二进制文件：
 
 | 系统平台 | 硬件架构 | 预编译二进制文件名 |
 |---|---|---|
@@ -75,7 +79,7 @@
 
 ```powershell
 # 下载预编译二进制（以 64 位 Windows 为例）
-Invoke-WebRequest -Uri "https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_windows_amd64.exe" -OutFile "amdl.exe"
+Invoke-WebRequest -Uri "https://github.com/1727disc/am-dl/releases/latest/download/amdl_windows_amd64.exe" -OutFile "amdl.exe"
 ```
 
 2. 首次运行 `amdl.exe`，程序将自动在当前目录下生成默认的 `config.yaml`：
@@ -105,10 +109,10 @@ Invoke-WebRequest -Uri "https://github.com/zhaarey/apple-music-downloader/releas
 
 ```bash
 # Apple Silicon 芯片（M 系列）：
-curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_darwin_arm64
+curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_darwin_arm64
 
 # Intel 芯片：
-# curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_darwin_amd64
+# curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_darwin_amd64
 
 # 赋予执行权限
 chmod +x amdl
@@ -146,10 +150,10 @@ chmod +x amdl
 
 ```bash
 # x86_64 / amd64 架构：
-curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_linux_amd64
+curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_linux_amd64
 
 # ARM64 架构：
-# curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_linux_arm64
+# curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_linux_arm64
 
 # 赋予执行权限
 chmod +x amdl
@@ -196,7 +200,7 @@ termux-setup-storage
 3. 下载预编译二进制：
 
 ```bash
-curl -L -o amdl https://github.com/zhaarey/apple-music-downloader/releases/latest/download/amdl_android_arm64
+curl -L -o amdl https://github.com/1727disc/am-dl/releases/latest/download/amdl_android_arm64
 chmod +x amdl
 ```
 
@@ -230,7 +234,7 @@ paths:
 
 ## Docker
 
-每次发布 Release 时会向 GHCR 推送多架构镜像（`linux/amd64`、`linux/arm64`，已内置 ffmpeg）：`ghcr.io/zhaarey/apple-music-downloader`。标签：`latest`、`<主>.<次>` 以及精确版本号（预发布版本只有精确版本号标签）。
+成功发布 Release 后会向 GHCR 推送多架构镜像（`linux/amd64`、`linux/arm64`，已内置 ffmpeg）：`ghcr.io/1727disc/am-dl`。标签：`latest`、`<主>.<次>` 以及精确版本号（预发布版本只有精确版本号标签）。
 
 容器内的工作目录是 `/data`：首次运行会在此生成 `config.yaml`，所有下载目录（`AM-Lossless` 等）也在这里。
 
@@ -257,7 +261,7 @@ docker compose run --rm amdl --atmos --select "https://music.apple.com/..."
 docker run --rm -it --user "$(id -u):$(id -g)" \
   -v "$PWD/data:/data" \
   -e AMDL_LITE_SERVER=http://192.168.1.10:12340 \
-  ghcr.io/zhaarey/apple-music-downloader:latest \
+  ghcr.io/1727disc/am-dl:latest \
   "https://music.apple.com/us/album/..."
 ```
 
@@ -402,11 +406,28 @@ metadata:
 > - 可在 `config.yaml` 的 `general.language` 中配置目标语言代码（如 `"zh-Hans-CN"`、`"en-US"`、`"ja"` 等），用以控制歌词翻译的目标语言。
 > - `extra` 设置为 `"translation"` 获取翻译歌词，设置为 `"pronunciation"` 获取发音/罗马音歌词（需 Apple Music 官方提供对应数据）。
 
+## 歌手和专辑素材下载
+
+`save-artist-extras` 保存歌手的标志、颜色和简介。`save-album-extras` 保存专辑曲目列表及日期、时长和热门程度等信息（如有提供），并将歌曲制作人员信息嵌入歌曲元数据。分别同时启用专辑或歌手的动态封面和附加素材选项时，也会保存对应的动态封面预览帧。
+
+在 `config.yaml` 的 `metadata.extras` 下配置附加素材，并在 `metadata.artwork` 下配置动态封面：
+
+```yaml
+metadata:
+  extras:
+    save-album-extras: true               # 保存专辑信息并嵌入歌曲制作人员信息
+    save-artist-extras: true              # 保存歌手标志、颜色和简介
+
+  artwork:
+    save-album-animated: true             # 保存专辑动态封面
+    save-artist-animated: true            # 保存歌手动态封面
+```
+
 ## 升级
 
 ### 内置自升级（推荐）
 
-通过内置的自升级命令一键升级至最新官方 Release，自动下载校验对应平台二进制，并提供配置增量迁移向导：
+通过内置的自升级命令一键升级至此分支的最新 Release，自动下载校验对应平台二进制，并提供配置增量迁移向导：
 
 ```bash
 # 检查并执行自升级与配置迁移
@@ -436,7 +457,7 @@ Windows PowerShell：
 
 ### 手动更新二进制
 
-直接前往 [GitHub Releases](https://github.com/zhaarey/apple-music-downloader/releases/latest) 下载对应平台的最新预编译二进制文件，替换原有的 `amdl` 或 `amdl.exe` 即可。
+直接前往 [GitHub Releases](https://github.com/1727disc/am-dl/releases/latest) 下载对应平台的最新预编译二进制文件，替换原有的 `amdl` 或 `amdl.exe` 即可。
 
 > 如果是通过源码构建的用户，请参阅 [开发者指南](#开发者指南)。
 
@@ -455,8 +476,8 @@ Windows PowerShell：
 **macOS / Linux**：
 
 ```bash
-git clone https://github.com/zhaarey/apple-music-downloader.git
-cd apple-music-downloader
+git clone https://github.com/1727disc/am-dl.git
+cd am-dl
 cp config.yaml.example config.yaml
 go build -o amdl .
 ./amdl --help
@@ -465,8 +486,8 @@ go build -o amdl .
 **Windows (PowerShell)**：
 
 ```powershell
-git clone https://github.com/zhaarey/apple-music-downloader.git
-cd apple-music-downloader
+git clone https://github.com/1727disc/am-dl.git
+cd am-dl
 copy config.yaml.example config.yaml
 go build -o amdl.exe .
 .\amdl.exe --help
@@ -494,7 +515,7 @@ go build -o amdl.exe .
 
 ### 发布版本
 
-版本发布由 `VERSION` 文件驱动：推送到 `main` 时，如果 `v<VERSION>` 这个 tag 还不存在，Release 工作流会构建所有平台的二进制并以该 tag 发布 GitHub Release。发版只需修改 `VERSION`（如 `0.1.0` → `0.1.1`）并合并到 `main`。带后缀的版本（如 `0.2.0-beta.1`）会作为预发布版本发布。
+版本发布由 `VERSION` 文件驱动：推送到 `development` 时，如果 `v<VERSION>` 这个 tag 还不存在，Release 工作流会构建所有平台的二进制并以该 tag 发布 GitHub Release。发版只需修改 `VERSION`（如 `0.1.0` → `0.1.1`）并推送到 `development`。带后缀的版本（如 `0.2.0-beta.1`）会作为预发布版本发布。
 
 Release 二进制会从构建它的仓库自升级，因此 fork 发布的版本会从 fork 获取更新。
 
