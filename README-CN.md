@@ -19,7 +19,7 @@
 - [开发者指南](#开发者指南)
 - [获取 media-user-token](#获取-media-user-token)
 - [歌词设置](#歌词设置)
-- [歌手和专辑素材下载](#歌手和专辑素材下载)
+- [歌手、专辑和播放列表素材下载](#歌手专辑和播放列表素材下载)
 - [致谢](#致谢)
 
 ## 功能特性
@@ -30,7 +30,7 @@
 4. 大文件流式下载和解密。
 5. 音乐视频下载，使用进程内 mp4ff 解密。
 6. 交互式搜索和曲目选择。
-7. 歌手和专辑素材下载。
+7. 歌手、专辑和播放列表素材下载。
 
 ## 支持的格式
 
@@ -343,10 +343,14 @@ Windows PowerShell：
 ### 交互式搜索
 
 ```bash
+./amdl --search "never gonna give you up"
 ./amdl --search album "never gonna give you up"
 ./amdl --search song "you move me"
 ./amdl --search artist "taylor swift"
+./amdl --search video "you move me"
 ```
+
+不指定类型时，将一起显示 Apple 推荐的歌曲、专辑、歌手和音乐视频结果。指定类型可以浏览更多该类型的结果。
 
 ### 杜比全景声
 
@@ -390,6 +394,14 @@ Windows PowerShell：
 
 ## 歌词设置
 
+使用 `--lyric` 和歌曲、专辑、播放列表、歌手或支持的电台链接，仅保存歌词，不下载音频、视频或封面：
+
+```bash
+./amdl --lyric "https://music.apple.com/us/album/example/1234567890"
+```
+
+即使 `metadata.lyrics.save-file` 为 `false`，歌词仍会按配置的格式和选项保存；已存在的歌词文件会被跳过。音乐视频以及没有独立歌曲的流式电台会被跳过。仅下载歌词时，路径中的音质占位符为空。
+
 在 `config.yaml` 的 `metadata.lyrics` 节点下配置歌词选项：
 
 ```yaml
@@ -406,20 +418,20 @@ metadata:
 > - 可在 `config.yaml` 的 `general.language` 中配置目标语言代码（如 `"zh-Hans-CN"`、`"en-US"`、`"ja"` 等），用以控制歌词翻译的目标语言。
 > - `extra` 设置为 `"translation"` 获取翻译歌词，设置为 `"pronunciation"` 获取发音/罗马音歌词（需 Apple Music 官方提供对应数据）。
 
-## 歌手和专辑素材下载
+## 歌手、专辑和播放列表素材下载
 
-`save-artist-extras` 保存歌手的标志、颜色和简介。`save-album-extras` 保存专辑曲目列表及日期、时长和热门程度等信息（如有提供），并将歌曲制作人员信息嵌入歌曲元数据。分别同时启用专辑或歌手的动态封面和附加素材选项时，也会保存对应的动态封面预览帧。
+`save-artist-extras` 保存歌手的标志、颜色和简介。`save-release-extras` 将专辑和播放列表的信息、简介及曲目列表保存到 `release-extra/release-info.txt`，并在有数据时将歌曲制作人员信息嵌入歌曲元数据。同时启用 `save-release-animated` 和 `save-release-extras` 时会保存专辑或播放列表的动态封面预览帧；同时启用 `save-artist-animated` 和 `save-artist-extras` 时会保存歌手的预览帧。
 
 在 `config.yaml` 的 `metadata.extras` 下配置附加素材，并在 `metadata.artwork` 下配置动态封面：
 
 ```yaml
 metadata:
   extras:
-    save-album-extras: true               # 保存专辑信息并嵌入歌曲制作人员信息
+    save-release-extras: true              # 保存专辑和播放列表信息并嵌入歌曲制作人员信息
     save-artist-extras: true              # 保存歌手标志、颜色和简介
 
   artwork:
-    save-album-animated: true             # 保存专辑动态封面
+    save-release-animated: true           # 保存专辑、播放列表和电台的动态封面
     save-artist-animated: true            # 保存歌手动态封面
 ```
 

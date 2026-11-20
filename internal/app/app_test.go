@@ -2,22 +2,179 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	ampapi "amdl/internal/amp-api"
 	"amdl/internal/config"
 	"amdl/internal/download"
 	"amdl/internal/model"
 
 	"github.com/itouakirai/go-mp4tag"
 )
+
+type searchRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f searchRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestMixedTopSearch(t *testing.T) {
+	original := download.Client
+	t.Cleanup(func() { download.Client = original })
+	download.Client = &http.Client{Transport: searchRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host != "amp-api-edge.music.apple.com" || req.URL.Path != "/v1/catalog/jp/search" || req.URL.Query().Get("format[resources]") != "map" || req.URL.Query().Get("platform") != "web" || req.URL.Query().Get("term") != "sample music" {
+			t.Errorf("unexpected top search request: %s", req.URL.String())
+		}
+		body := `{"results":{"top":{"data":[{"id":"1","type":"artists"},{"id":"2","type":"songs"},{"id":"ignored","type":"playlists"},{"id":"45","type":"music-videos"},{"id":"3","type":"albums"}]},"song":{"next":"/next","data":[{"id":"2","type":"songs"}]},"music_video":{"next":"/next","data":[{"id":"45","type":"music-videos"}]}},"resources":{"music-videos":{"45":{"id":"45","type":"music-videos","attributes":{"name":"Video","artistName":"Artist","contentRating":"clean","url":"https://music.apple.com/jp/music-video/video/45"}}},"artists":{"1":{"id":"1","type":"artists","attributes":{"name":"Artist","url":"https://music.apple.com/jp/artist/test/1"}}},"songs":{"2":{"id":"2","type":"songs","attributes":{"name":"Song","artistName":"Artist","albumName":"Album","contentRating":"explicit","url":"https://music.apple.com/jp/album/album/3"}}},"albums":{"3":{"id":"3","type":"albums","attributes":{"name":"Album","artistName":"Artist","contentRating":"clean","url":"https://music.apple.com/jp/album/album/3"}}}}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	results, _, err := ampapi.SearchWeb("jp", "sample music", "", "ja", "test-token", 21, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 4 {
+		t.Fatalf("got %d results, want 4", len(results))
+	}
+	for i, want := range []struct{ kind, label, path string }{
+		{"Artist", "[Artist] Artist", "/artist/"},
+		{"Song", "[Song] Song [E]", "/song/2"},
+		{"Video", "[Video] Video [C]", "/music-video/45"},
+		{"Album", "[Album] Album [C]", "/album/"},
+	} {
+		item, label, ok := topSearchItem(results[i], "jp")
+		if !ok || item.Type != want.kind || !strings.Contains(label, want.label) || !strings.Contains(item.URL, want.path) {
+			t.Errorf("result %d: item=%+v label=%q ok=%v", i, item, label, ok)
+		}
+	}
+	songs, hasNext, err := ampapi.SearchWeb("jp", "sample music", "song", "ja", "test-token", 15, 15)
+	if err != nil || !hasNext || len(songs) != 1 || songs[0].ID != "2" {
+		t.Fatalf("scoped search results: %+v next=%v err=%v", songs, hasNext, err)
+	}
+	videos, hasNext, err := ampapi.SearchWeb("jp", "sample music", "video", "ja", "test-token", 15, 15)
+	if err != nil || !hasNext || len(videos) != 1 || videos[0].Type != "music-videos" {
+		t.Fatalf("video search results: %+v next=%v err=%v", videos, hasNext, err)
+	}
+	if scope, query := parseSearchInput("video", []string{"sample"}); scope != "video" || strings.Join(query, " ") != "sample" {
+		t.Fatalf("video search: %q %v", scope, query)
+	}
+	if scope, query := parseSearchInput("sample", []string{"music"}); scope != "" || strings.Join(query, " ") != "sample music" {
+		t.Fatalf("unscoped search: %q %v", scope, query)
+	}
+	if scope, query := parseSearchInput("song", []string{"sample"}); scope != "song" || strings.Join(query, " ") != "sample" {
+		t.Fatalf("scoped search: %q %v", scope, query)
+	}
+}
+
+func TestLyricsOnlyAlbumAndPlaylist(t *testing.T) {
+	original := download.Client
+	t.Cleanup(func() { download.Client = original })
+	var requests []string
+	download.Client = &http.Client{Transport: searchRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests = append(requests, req.URL.Path)
+		var body string
+		switch req.URL.Path {
+		case "/v1/catalog/us/albums/123", "/v1/catalog/us/playlists/pl.test":
+			body = `{"data":[{"attributes":{"name":"Collection","artistName":"Artist","artwork":{"url":"https://unexpected.test/cover.jpg"},"editorialVideo":{"motionDetailSquare":{"video":"https://unexpected.test/video.m3u8"}}},"relationships":{"tracks":{"data":[{"id":"111","type":"songs","attributes":{"name":"Track","artistName":"Artist","trackNumber":1,"discNumber":1}},{"id":"222","type":"music-videos","attributes":{"name":"Video"}}]}}}]}`
+		case "/lyrics":
+			if req.URL.Query().Get("adamId") != "111" {
+				t.Errorf("unexpected lyrics request: %s", req.URL.RawQuery)
+			}
+			body = `{"code":0,"data":{"lyrics":"<tt>lyrics</tt>"}}`
+		default:
+			t.Errorf("unexpected media request: %s", req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Paths.Alac, cfg.Paths.ArtistFolder = root, ""
+	cfg.Paths.AlbumFolder, cfg.Paths.PlaylistFolder = "Album", "Playlist"
+	cfg.Paths.SongFile = "{SongNumber}. {SongName}"
+	cfg.General.LiteServer = "http://wrapper.test"
+	cfg.Metadata.Lyrics.Format = "ttml"
+	cfg.Metadata.Lyrics.SaveFile = false
+	cfg.Metadata.Extras.SaveReleaseExtras = true
+	cfg.Metadata.Artwork.SaveReleaseAnimated = true
+	cfg.Metadata.Artwork.SaveArtist = true
+	r := NewRunner(cfg)
+	r.Flags.LyricOnly = true
+	albumDir := filepath.Join(root, "Album")
+	if err := os.MkdirAll(albumDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	audioPath := filepath.Join(albumDir, "01. Track.m4a")
+	if err := os.WriteFile(audioPath, []byte("existing audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ripAlbum("123", "test-token", "us", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ripPlaylist("pl.test", "test-token", "us", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Album", "Playlist"} {
+		data, err := os.ReadFile(filepath.Join(root, name, "01. Track.ttml"))
+		if err != nil || string(data) != "<tt>lyrics</tt>" {
+			t.Fatalf("%s lyrics: %q, %v", name, data, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, name, "release-extra")); !os.IsNotExist(err) {
+			t.Errorf("%s: release extras unexpectedly created", name)
+		}
+	}
+	if data, err := os.ReadFile(audioPath); err != nil || string(data) != "existing audio" {
+		t.Fatalf("existing audio changed: %q, %v", data, err)
+	}
+	if len(requests) != 4 {
+		t.Fatalf("expected only two metadata and two lyrics requests, got %v", requests)
+	}
+	if r.State.Counter.Success != 2 || r.State.Counter.Total != 2 {
+		t.Fatalf("unexpected counters: %+v", r.State.Counter)
+	}
+}
+
+func TestReleaseExtraInformation(t *testing.T) {
+	var playlist ampapi.PlaylistRespData
+	data := `{"attributes":{"name":"Example playlist","curatorName":"Apple Music","trackCount":2,"description":{"short":"Short note","standard":"Standard note"},"editorialVideo":{"motionDetailSquare":{"previewFrame":{"url":"https://example.test/frame/{w}x{h}.jpg","width":1200,"height":1200}}}},"relationships":{"tracks":{"data":[{"attributes":{"name":"First","durationInMillis":60000}},{"attributes":{"name":"Second","durationInMillis":90000}}]}}}`
+	if err := json.Unmarshal([]byte(data), &playlist); err != nil {
+		t.Fatal(err)
+	}
+	if playlist.Attributes.EditorialVideo.MotionDetailSquare.PreviewFrame.Width != 1200 {
+		t.Fatal("playlist preview frame was not decoded")
+	}
+	dir := t.TempDir()
+	if err := saveFullPlaylistInfo(dir, &playlist); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "release-extra", "release-info.txt")
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Playlist: Example playlist", "Short note", "Standard note", "Playlist length: 2:30.000", "Disc 1", "  1 First", "  2 Second"} {
+		if !bytes.Contains(contents, []byte(want)) {
+			t.Errorf("playlist information missing %q: %s", want, contents)
+		}
+	}
+	var album ampapi.AlbumRespData
+	album.Attributes.Name = "Example album"
+	albumDir := t.TempDir()
+	if err := saveFullAlbumInfo(albumDir, &album); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(albumDir, "release-extra", "release-info.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestPlaylistTagsReplaceOriginalArtwork(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")

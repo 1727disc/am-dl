@@ -5,93 +5,121 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"amdl/internal/download"
 )
 
-// SearchResp represents the top-level response from the search API.
-type SearchResp struct {
-	Results SearchResults `json:"results"`
+// WebSearchResult is a song, album, artist, or music video from web catalog search.
+type WebSearchResult struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Attributes struct {
+		Name          string   `json:"name"`
+		ArtistName    string   `json:"artistName"`
+		AlbumName     string   `json:"albumName"`
+		ReleaseDate   string   `json:"releaseDate"`
+		TrackCount    int      `json:"trackCount"`
+		ContentRating string   `json:"contentRating"`
+		GenreNames    []string `json:"genreNames"`
+		URL           string   `json:"url"`
+	} `json:"attributes"`
 }
 
-// SearchResults contains the different types of search results.
-type SearchResults struct {
-	Songs   *SongResults   `json:"songs,omitempty"`
-	Albums  *AlbumResults  `json:"albums,omitempty"`
-	Artists *ArtistResults `json:"artists,omitempty"`
-}
-
-// SongResults contains a list of song search results.
-type SongResults struct {
-	Href string         `json:"href"`
-	Next string         `json:"next"`
-	Data []SongRespData `json:"data"`
-}
-
-// AlbumResults contains a list of album search results.
-type AlbumResults struct {
-	Href string          `json:"href"`
-	Next string          `json:"next"`
-	Data []AlbumRespData `json:"data"`
-}
-
-// ArtistResults contains a list of artist search results.
-type ArtistResults struct {
-	Href string `json:"href"`
-	Next string `json:"next"`
-	Data []struct {
-		ID         string `json:"id"`
-		Type       string `json:"type"`
-		Href       string `json:"href"`
-		Attributes struct {
-			Name       string   `json:"name"`
-			GenreNames []string `json:"genreNames"`
-			URL        string   `json:"url"`
-		} `json:"attributes"`
-	} `json:"data"`
-}
-
-// Search performs a search query against the Apple Music API.
-func Search(storefront, term, types, language, token string, limit, offset int) (*SearchResp, error) {
-	var err error
+// SearchWeb follows the web player's catalog search and resolves the ordered
+// result references using its resource map. An empty scope selects top results.
+func SearchWeb(storefront, term, scope, language, token string, limit, offset int) ([]WebSearchResult, bool, error) {
 	if token == "" {
+		var err error
 		token, err = GetToken()
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://amp-api.music.apple.com/v1/catalog/%s/search", storefront), nil)
+	group := "top"
+	types := "activities,albums,apple-curators,artists,curators,editorial-items,music-movies,music-videos,playlists,record-labels,songs,stations,tv-episodes,uploaded-videos"
+	switch scope {
+	case "":
+	case "song":
+		group, types = "song", "songs"
+	case "album":
+		group, types = "album", "albums"
+	case "artist":
+		group, types = "artist", "artists"
+	case "video":
+		group, types = "music_video", "music-videos"
+	default:
+		return nil, false, fmt.Errorf("invalid search type: %s", scope)
+	}
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://amp-api-edge.music.apple.com/v1/catalog/%s/search", storefront), nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
 	req.Header.Set("Origin", "https://music.apple.com")
-
-	query := url.Values{}
-	query.Set("term", term)
-	query.Set("types", types)
-	query.Set("limit", fmt.Sprintf("%d", limit))
-	query.Set("offset", fmt.Sprintf("%d", offset))
-	query.Set("l", language)
-	req.URL.RawQuery = query.Encode()
-
-	do, err := download.Client.Do(req)
+	q := url.Values{}
+	q.Set("art[music-videos:url]", "c")
+	q.Set("art[url]", "f")
+	q.Set("extend", "artistUrl")
+	q.Set("fields[albums]", "artistName,artistUrl,artwork,contentRating,editorialArtwork,editorialNotes,name,playParams,releaseDate,url,trackCount")
+	q.Set("fields[artists]", "url,name,artwork")
+	q.Set("format[resources]", "map")
+	q.Set("include[albums]", "artists")
+	q.Set("include[music-videos]", "artists")
+	q.Set("include[songs]", "artists")
+	q.Set("include[stations]", "radio-show")
+	q.Set("l", language)
+	q.Set("limit", strconv.Itoa(limit))
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	q.Set("omit[resource]", "autos")
+	q.Set("platform", "web")
+	q.Set("relate[albums]", "artists")
+	q.Set("relate[songs]", "albums")
+	q.Set("term", term)
+	q.Set("types", types)
+	q.Set("with", "lyricHighlights,lyrics,naturalLanguage,serverBubbles,subtitles")
+	req.URL.RawQuery = q.Encode()
+	resp, err := download.Client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	defer do.Body.Close()
-
-	if do.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API request failed with status: %s", do.Status)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("API request failed with status: %s", resp.Status)
 	}
-
-	obj := new(SearchResp)
-	err = json.NewDecoder(do.Body).Decode(&obj)
-	if err != nil {
-		return nil, err
+	var payload struct {
+		Results map[string]struct {
+			Next string `json:"next"`
+			Data []struct {
+				ID   string `json:"id"`
+				Type string `json:"type"`
+			} `json:"data"`
+		} `json:"results"`
+		Resources map[string]map[string]WebSearchResult `json:"resources"`
 	}
-
-	return obj, nil
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, false, err
+	}
+	page := payload.Results[group]
+	items := make([]WebSearchResult, 0, len(page.Data))
+	for _, ref := range page.Data {
+		if ref.Type != "songs" && ref.Type != "albums" && ref.Type != "artists" && ref.Type != "music-videos" {
+			continue
+		}
+		item, ok := payload.Resources[ref.Type][ref.ID]
+		if !ok {
+			continue
+		}
+		if item.ID == "" {
+			item.ID = ref.ID
+		}
+		if item.Type == "" {
+			item.Type = ref.Type
+		}
+		items = append(items, item)
+	}
+	return items, page.Next != "", nil
 }

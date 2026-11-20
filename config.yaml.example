@@ -58,7 +58,7 @@ paths:
 # ------------------------------------------------------------------------------
 metadata:
   extras:
-    save-album-extras: false              # Save album information, static animated frames (if animated is enabled) in album-extra, and embed available song credits
+    save-release-extras: false             # Save album/playlist information and available preview frames in release-extra, and embed song credits
     save-artist-extras: false             # Save available artist logo, biography, static animated frames (if animated is enabled), and key color in artist-extra
 
   lyrics:
@@ -74,7 +74,7 @@ metadata:
     format: "jpg"                         # Image format: "jpg", "png", or "original"
     save-artist: false                    # Save artist banner/avatar cover image to artist folder
     save-artist-animated: false           # Save available artist motion videos in artist-extra (requires ffmpeg)
-    save-album-animated: false            # Save album, playlist, and station motion artwork as video (requires ffmpeg)
+    save-release-animated: false            # Save album, playlist, and station motion artwork as video (requires ffmpeg)
     emby-animated: false                  # Save animated artwork formatted for Emby/Jellyfin (requires ffmpeg)
     dl-for-playlist: false                # Embed each song's album cover instead of the playlist cover
 

@@ -25,7 +25,7 @@ func Main() {
 		search_type string
 	)
 	pflag.StringVarP(&configFile, "config", "c", "", "Path to custom config file (default: config.yaml)")
-	pflag.StringVar(&search_type, "search", "", "Search for 'album', 'song', or 'artist'. Provide query after flags.")
+	pflag.StringVar(&search_type, "search", "", "Search top results, or specify 'album', 'song', 'artist', or 'video' followed by a query.")
 	pflag.BoolVar(&r.Flags.Atmos, "atmos", false, "Enable atmos download mode")
 	pflag.BoolVar(&r.Flags.AAC, "aac", false, "Enable adm-aac download mode")
 	pflag.BoolVar(&r.Flags.Select, "select", false, "Enable selective download")
@@ -33,6 +33,7 @@ func Main() {
 	pflag.BoolVar(&r.Flags.Debug, "debug", false, "Enable debug mode to show audio quality information")
 	pflag.BoolVar(&r.Flags.PrintJSON, "json", false, "Output JSON summary at the end")
 	pflag.BoolVar(&r.Flags.SaveM3U8, "save-m3u8-playlist", false, "Save M3U8 playlist file")
+	pflag.BoolVar(&r.Flags.LyricOnly, "lyric", false, "Download lyrics only, without songs or videos")
 	pflag.StringVar(&r.Flags.LiteServerFlag, "lite-server", "", "wrapper-lite HTTP API endpoint for this run")
 	pflag.Int("alac-max", 0, "Specify the max quality for download alac")
 	pflag.Int("atmos-max", 0, "Specify the max quality for download atmos")
@@ -51,7 +52,7 @@ func Main() {
 	pflag.Usage = func() {
 		prog := progName()
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [url1 url2 ...]\n", prog)
-		fmt.Fprintf(os.Stderr, "Search Usage: %s --search [album|song|artist] [query]\n", prog)
+		fmt.Fprintf(os.Stderr, "Search Usage: %s --search [album|song|artist|video] <query>\n", prog)
 		fmt.Println("\nOptions:")
 		pflag.PrintDefaults()
 	}
@@ -131,12 +132,13 @@ func Main() {
 	args := pflag.Args()
 
 	if search_type != "" {
-		if len(args) == 0 {
+		scope, searchArgs := parseSearchInput(search_type, args)
+		if strings.TrimSpace(strings.Join(searchArgs, " ")) == "" {
 			fmt.Println("Error: --search flag requires a query.")
 			pflag.Usage()
 			return
 		}
-		selectedUrl, err := r.handleSearch(search_type, args, token)
+		selectedUrl, err := r.handleSearch(scope, searchArgs, token)
 		if err != nil {
 			fmt.Printf("\nSearch process failed: %v\n", err)
 			return
@@ -170,9 +172,12 @@ func Main() {
 			fmt.Println("Failed to get artist albums.")
 			return
 		}
-		mvArgs, err := r.checkArtist(os.Args[0], token, "music-videos")
-		if err != nil {
-			fmt.Println("Failed to get artist music-videos.")
+		var mvArgs []string
+		if !r.Flags.LyricOnly {
+			mvArgs, err = r.checkArtist(os.Args[0], token, "music-videos")
+			if err != nil {
+				fmt.Println("Failed to get artist music-videos.")
+			}
 		}
 		os.Args = append(albumArgs, mvArgs...)
 	}
@@ -183,6 +188,10 @@ func Main() {
 			var storefront, albumId string
 
 			if strings.Contains(urlRaw, "/music-video/") {
+				if r.Flags.LyricOnly {
+					fmt.Println("Music video skipped in lyrics-only mode.")
+					continue
+				}
 				fmt.Println("Music Video")
 				if r.Flags.Debug {
 					continue
@@ -318,4 +327,3 @@ func progName() string {
 	}
 	return "amdl"
 }
-

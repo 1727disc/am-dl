@@ -19,14 +19,14 @@ This command-line tool downloads albums, songs, playlists, stations and music vi
 - [For Developers](#for-developers)
 - [Get media-user-token](#get-media-user-token)
 - [Lyrics options](#lyrics-options)
-- [Asset downloads](#artist-and-album-asset-downloads)
+- [Asset downloads](#artist-and-release-asset-downloads)
 - [Credits](#credits)
 
 ## Features
 
 1. Inline cover art and LRC/TTML lyrics.
 2. Word-by-word, line-by-line, and unsynchronized lyrics.
-3. Artist and album asset downloads.
+3. Artist, album, and playlist asset downloads.
 4. Streaming download and decryption for large files.
 5. Music-video downloads using in-process mp4ff decryption.
 6. Interactive search and track selection.
@@ -330,10 +330,14 @@ Enter track numbers separated by spaces.
 ### Interactive search
 
 ```bash
+./amdl --search "never gonna give you up"
 ./amdl --search album "never gonna give you up"
 ./amdl --search song "you move me"
 ./amdl --search artist "taylor swift"
+./amdl --search video "you move me"
 ```
+
+Without a type, search shows Apple's top song, album, artist, and music video results together. Specify a type to browse more results of that kind.
 
 ### Dolby Atmos
 
@@ -377,6 +381,14 @@ Enter track numbers separated by spaces.
 
 ## Lyrics options
 
+Use `--lyric` with a song, album, playlist, artist, or supported station URL to save lyrics without downloading audio, videos, or artwork:
+
+```bash
+./amdl --lyric "https://music.apple.com/us/album/example/1234567890"
+```
+
+Lyrics use the configured format and options even when `metadata.lyrics.save-file` is `false`. Existing lyric files are skipped. Music videos and streaming stations without individual song tracks are skipped. Quality placeholders in paths are empty in lyrics-only mode.
+
 Configure lyrics settings under `metadata.lyrics` in `config.yaml`:
 
 ```yaml
@@ -393,20 +405,20 @@ metadata:
 > - Set `general.language` in `config.yaml` (e.g. `"en-US"`, `"zh-Hans-CN"`, `"ja"`) to control the target language for translated lyrics.
 > - `extra`: set to `"translation"` for translated lyrics or `"pronunciation"` for phonetic/romanized lyrics (when provided by Apple Music).
 
-## Artist and album asset downloads
+## Artist and release asset downloads
 
-`save-artist-extras` saves an artist's logo, color, and about section. `save-album-extras` saves an album's track list with date, length, and popularity information (when available). Animated preview frames are saved when both `save-album/artist-animated` and `save-album/artist-extras` are enabled.
+`save-artist-extras` saves an artist's logo, color, and about section. `save-release-extras` saves album and playlist information, descriptions, and track lists in `release-extra/release-info.txt`, and embeds available song credits. Animated preview frames are saved when both `save-release-animated` and `save-release-extras` are enabled, or when both `save-artist-animated` and `save-artist-extras` are enabled.
 
 Configure extras settings under `metadata.extras` in `config.yaml`:
 
 ```yaml
 metadata:
   extras:
-    save-album-extras: true               # Save album animated previews, track list information, and embed song credits.
+    save-release-extras: true              # Save album and playlist information and embed song credits.
     save-artist-extras: true              # Save artist animated previews, logo, color, and about information.
 
   artwork:
-    save-album-animated: true
+    save-release-animated: true
     save-artist-animated: true
 ```
 

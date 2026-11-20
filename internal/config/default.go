@@ -40,7 +40,7 @@ func Default() Config {
 			AppleMaster:    "[M]",
 		},
 		Metadata: MetadataConfig{
-			Extras: ExtrasConfig{SaveAlbumExtras: false},
+			Extras: ExtrasConfig{SaveReleaseExtras: false},
 			Lyrics: LyricsConfig{
 				SaveFile: false,
 				Embed:    true,
@@ -49,13 +49,13 @@ func Default() Config {
 				Extra:    "",
 			},
 			Artwork: ArtworkConfig{
-				Embed:             true,
-				Size:              "5000x5000",
-				Format:            "jpg",
-				SaveArtist:        false,
-				SaveAlbumAnimated: false,
-				EmbyAnimated:      false,
-				DlForPlaylist:     false,
+				Embed:               true,
+				Size:                "5000x5000",
+				Format:              "jpg",
+				SaveArtist:          false,
+				SaveReleaseAnimated: false,
+				EmbyAnimated:        false,
+				DlForPlaylist:       false,
 			},
 			Tags: TagsConfig{
 				SortOrder:              true,

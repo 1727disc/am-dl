@@ -33,7 +33,7 @@ func GetPlaylistResp(storefront string, id string, language string, token string
 	//query.Set("fields[artists]", "name,artwork")
 	//query.Set("fields[albums:albums]", "artistName,artwork,name,releaseDate,url")
 	//query.Set("fields[record-labels]", "name")
-	query.Set("extend", "editorialVideo,extendedAssetUrls")
+	query.Set("extend", "editorialVideo,extendedAssetUrls,trackCount")
 	query.Set("l", language)
 	req.URL.RawQuery = query.Encode()
 	do, err := download.Client.Do(req)
@@ -49,6 +49,9 @@ func GetPlaylistResp(storefront string, id string, language string, token string
 	if err != nil {
 		return nil, err
 	}
+	if len(obj.Data) == 0 {
+		return nil, errors.New("playlist response contains no data")
+	}
 	if len(obj.Data[0].Relationships.Tracks.Next) > 0 {
 		next := obj.Data[0].Relationships.Tracks.Next
 		for {
@@ -62,6 +65,7 @@ func GetPlaylistResp(storefront string, id string, language string, token string
 				break
 			}
 		}
+		obj.Data[0].Relationships.Tracks.Next = ""
 	}
 	return obj, nil
 }
@@ -87,7 +91,17 @@ type PlaylistRespData struct {
 			TextColor3 string `json:"textColor3"`
 			TextColor4 string `json:"textColor4"`
 		} `json:"artwork"`
-		ArtistName           string   `json:"artistName"`
+		ArtistName       string `json:"artistName"`
+		CuratorName      string `json:"curatorName"`
+		LastModifiedDate string `json:"lastModifiedDate"`
+		Description      struct {
+			Short    string `json:"short"`
+			Standard string `json:"standard"`
+		} `json:"description"`
+		EditorialNotes struct {
+			Short    string `json:"short"`
+			Standard string `json:"standard"`
+		} `json:"editorialNotes"`
 		IsSingle             bool     `json:"isSingle"`
 		URL                  string   `json:"url"`
 		IsComplete           bool     `json:"isComplete"`
@@ -108,17 +122,44 @@ type PlaylistRespData struct {
 		} `json:"playParams"`
 		IsCompilation  bool `json:"isCompilation"`
 		EditorialVideo struct {
+			MotionWide struct {
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
+			} `json:"motionWideVideo21x9"`
 			MotionTall struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionTallVideo3x4"`
 			MotionSquare struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionSquareVideo1x1"`
 			MotionDetailTall struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionDetailTall"`
 			MotionDetailSquare struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionDetailSquare"`
 		} `json:"editorialVideo"`
 	} `json:"attributes"`

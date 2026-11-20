@@ -18,6 +18,7 @@ type Flags struct {
 	Debug          bool
 	PrintJSON      bool
 	SaveM3U8       bool
+	LyricOnly      bool
 	LiteServerFlag string
 	Version        bool
 	Update         bool

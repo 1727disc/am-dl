@@ -108,7 +108,7 @@ func renderAlbumInfo(album *ampapi.AlbumRespData) (string, error) {
 
 // writeAlbumInfoAtomic avoids leaving a partial file if writing fails.
 func writeAlbumInfoAtomic(path string, content []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".album-info-*")
+	f, err := os.CreateTemp(filepath.Dir(path), ".release-info-*")
 	if err != nil {
 		return err
 	}
@@ -142,11 +142,11 @@ func mergeAlbumInfo(outputPath, rendered string) (string, error) {
 	const delimiter = "\nTracks:\n"
 	pos, newPos := strings.Index(old, delimiter), strings.Index(rendered, delimiter)
 	if pos < 0 || newPos < 0 {
-		return "", fmt.Errorf("existing album-info.txt has no recognizable track section; preserve it and rename it before updating")
+		return "", fmt.Errorf("existing %s has no recognizable track section; preserve it and rename it before updating", filepath.Base(outputPath))
 	}
 	for _, line := range strings.Split(old[pos+len(delimiter):], "\n") {
 		if strings.TrimSpace(line) != "" && !albumInfoTrackLine.MatchString(line) {
-			return "", fmt.Errorf("existing album-info.txt contains unrecognized text in its track section; preserve it and rename it before updating")
+			return "", fmt.Errorf("existing %s contains unrecognized text in its track section; preserve it and rename it before updating", filepath.Base(outputPath))
 		}
 	}
 	return old[:pos] + rendered[newPos:], nil
@@ -160,12 +160,105 @@ func saveFullAlbumInfo(dir string, album *ampapi.AlbumRespData) error {
 	if err != nil {
 		return err
 	}
-	dir = filepath.Join(dir, "album-extra")
+	dir = filepath.Join(dir, "release-extra")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "album-info.txt")
+	path := filepath.Join(dir, "release-info.txt")
 	if len(album.Relationships.Tracks.Data) > 0 {
+		rendered, err = mergeAlbumInfo(path, rendered)
+	} else if _, statErr := os.Stat(path); statErr == nil {
+		return nil
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if err != nil {
+		return err
+	}
+	if existing, readErr := os.ReadFile(path); readErr == nil && string(existing) == rendered {
+		return nil
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	return writeAlbumInfoAtomic(path, []byte(rendered))
+}
+
+func renderPlaylistInfo(playlist *ampapi.PlaylistRespData) (string, error) {
+	if playlist == nil {
+		return "", fmt.Errorf("missing playlist metadata")
+	}
+	a := playlist.Attributes
+	var lines []string
+	if a.Name != "" {
+		lines = append(lines, "Playlist: "+a.Name)
+	}
+	if a.CuratorName != "" {
+		lines = append(lines, "Curator: "+a.CuratorName)
+	}
+	if a.LastModifiedDate != "" {
+		lines = append(lines, "Last updated: "+a.LastModifiedDate)
+	}
+	tracks := playlist.Relationships.Tracks.Data
+	complete := len(tracks) > 0 && playlist.Relationships.Tracks.Next == "" && (a.TrackCount == 0 || len(tracks) == a.TrackCount)
+	var total int64
+	for _, track := range tracks {
+		if track.Attributes.DurationInMillis <= 0 {
+			complete = false
+		} else {
+			total += int64(track.Attributes.DurationInMillis)
+		}
+	}
+	if complete {
+		lines = append(lines, "Playlist length: "+albumDuration(total))
+	}
+	short, standard := strings.TrimSpace(a.EditorialNotes.Short), strings.TrimSpace(a.EditorialNotes.Standard)
+	if short == "" {
+		short = strings.TrimSpace(a.Description.Short)
+	}
+	if standard == "" {
+		standard = strings.TrimSpace(a.Description.Standard)
+	}
+	if short != "" {
+		lines = append(lines, "", "Short description:", short)
+	}
+	if standard != "" {
+		lines = append(lines, "", "Standard description:", standard)
+	}
+	if len(tracks) > 0 {
+		lines = append(lines, "", "Tracks:", "", "Disc 1")
+		for i, track := range tracks {
+			marker := " "
+			if track.Meta.Popularity != nil && *track.Meta.Popularity > 0.7 {
+				marker = "•"
+			}
+			label := fmt.Sprintf("%s %d %s", marker, i+1, track.Attributes.Name)
+			var details []string
+			if track.Attributes.DurationInMillis > 0 {
+				details = append(details, albumDuration(int64(track.Attributes.DurationInMillis)))
+			}
+			if track.Attributes.ReleaseDate != "" {
+				details = append(details, "released "+track.Attributes.ReleaseDate)
+			}
+			if len(details) > 0 {
+				label += " (" + strings.Join(details, "; ") + ")"
+			}
+			lines = append(lines, label)
+		}
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func saveFullPlaylistInfo(dir string, playlist *ampapi.PlaylistRespData) error {
+	rendered, err := renderPlaylistInfo(playlist)
+	if err != nil {
+		return err
+	}
+	dir = filepath.Join(dir, "release-extra")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "release-info.txt")
+	if len(playlist.Relationships.Tracks.Data) > 0 {
 		rendered, err = mergeAlbumInfo(path, rendered)
 	} else if _, statErr := os.Stat(path); statErr == nil {
 		return nil

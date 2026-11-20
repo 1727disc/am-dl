@@ -116,7 +116,7 @@ func (r *Runner) prepareCollectionFolder(base string, displayName string) (strin
 }
 
 func (r *Runner) saveM3UPlaylist(dir string, name string, startIdx int) {
-	if !r.Flags.SaveM3U8 {
+	if !r.Flags.SaveM3U8 || r.Flags.LyricOnly {
 		return
 	}
 	if len(r.State.AddedTracks) > startIdx {
