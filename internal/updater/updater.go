@@ -1,11 +1,9 @@
 package updater
 
-// RepoOwner and RepoName identify the GitHub repository self-update pulls
-// releases from. Release builds override them via -ldflags so a fork's
-// binaries update from the fork and upstream's from upstream.
+// RepoOwner and RepoName default to this fork and can be set at build time.
 var (
-	RepoOwner = "zhaarey"
-	RepoName  = "apple-music-downloader"
+	RepoOwner = "1727disc"
+	RepoName  = "am-dl"
 )
 
 // DefaultConfigExample holds the embedded content of config.yaml.example,

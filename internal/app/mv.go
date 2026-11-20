@@ -71,12 +71,18 @@ func (r *Runner) mvDownloader(adamID string, saveDir string, token string, store
 	if r.Config.Metadata.Artwork.Embed {
 		thumbURL := MVInfo.Data[0].Attributes.Artwork.URL
 		baseThumbName := forbiddenNames.ReplaceAllString(mvSaveName, "_") + "_thumbnail"
-		covPath, err = r.writeCover(saveDir, baseThumbName, thumbURL)
-		if err != nil {
-			fmt.Println("Failed to save MV thumbnail:", err)
-			covPath = ""
+		tmpDir, tempErr := os.MkdirTemp(saveDir, ".mv-cover-*")
+		if tempErr != nil {
+			fmt.Println("Failed to create MV thumbnail directory:", tempErr)
 		} else {
-			defer os.Remove(covPath)
+			defer os.Remove(tmpDir)
+			covPath, err = r.writeCover(tmpDir, baseThumbName, thumbURL)
+			if err != nil {
+				fmt.Println("Failed to save MV thumbnail:", err)
+				covPath = ""
+			} else {
+				defer os.Remove(covPath)
+			}
 		}
 	}
 

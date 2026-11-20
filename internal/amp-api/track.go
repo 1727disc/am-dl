@@ -8,9 +8,12 @@ type TrackResp struct {
 
 // 类型为song 或者 music-video
 type TrackRespData struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Href       string `json:"href"`
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Href string `json:"href"`
+	Meta struct {
+		Popularity *float64 `json:"popularity"`
+	} `json:"meta"`
 	Attributes struct {
 		Previews []struct {
 			URL string `json:"url"`

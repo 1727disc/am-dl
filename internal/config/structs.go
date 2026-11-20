@@ -58,9 +58,15 @@ type PathsConfig struct {
 
 // MetadataConfig holds lyrics, artwork, and tags configurations.
 type MetadataConfig struct {
+	Extras  ExtrasConfig  `koanf:"extras"`
 	Lyrics  LyricsConfig  `koanf:"lyrics"`
 	Artwork ArtworkConfig `koanf:"artwork"`
 	Tags    TagsConfig    `koanf:"tags"`
+}
+
+type ExtrasConfig struct {
+	SaveAlbumExtras  bool `koanf:"save-album-extras"`
+	SaveArtistExtras bool `koanf:"save-artist-extras"`
 }
 
 // LyricsConfig holds lyrics fetching, formatting, and embedding options.
@@ -74,13 +80,14 @@ type LyricsConfig struct {
 
 // ArtworkConfig holds cover art and animated artwork options.
 type ArtworkConfig struct {
-	Embed         bool   `koanf:"embed"`
-	Size          string `koanf:"size"`
-	Format        string `koanf:"format"`
-	SaveArtist    bool   `koanf:"save-artist"`
-	SaveAnimated  bool   `koanf:"save-animated"`
-	EmbyAnimated  bool   `koanf:"emby-animated"`
-	DlForPlaylist bool   `koanf:"dl-for-playlist"`
+	Embed              bool   `koanf:"embed"`
+	Size               string `koanf:"size"`
+	Format             string `koanf:"format"`
+	SaveArtist         bool   `koanf:"save-artist"`
+	SaveArtistAnimated bool   `koanf:"save-artist-animated"`
+	SaveAlbumAnimated  bool   `koanf:"save-album-animated"`
+	EmbyAnimated       bool   `koanf:"emby-animated"`
+	DlForPlaylist      bool   `koanf:"dl-for-playlist"`
 }
 
 // TagsConfig holds audio metadata tag formatting and identifiers.

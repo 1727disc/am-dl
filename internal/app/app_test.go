@@ -98,7 +98,7 @@ func TestFlagValueFromArgs(t *testing.T) {
 	}
 }
 
-func TestWriteCoverFailurePreservesExisting(t *testing.T) {
+func TestWriteCoverReusesExisting(t *testing.T) {
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "cover.jpg")
 	if err := os.WriteFile(existing, []byte("old"), 0644); err != nil {
@@ -112,15 +112,20 @@ func TestWriteCoverFailurePreservesExisting(t *testing.T) {
 	r := NewRunner(config.ConfigSet{})
 	r.Config.Metadata.Artwork.Format = "jpg"
 	r.Config.Metadata.Artwork.Size = "600x600"
+	requested := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 	download.Client = server.Client()
 
-	_, err := r.writeCover(dir, "cover", server.URL+"/image/{w}x{h}.jpg")
-	if err == nil {
-		t.Fatal("writeCover() error = nil, want failure")
+	path, err := r.writeCover(dir, "cover", server.URL+"/image/{w}x{h}.jpg")
+	if err != nil || path != existing {
+		t.Fatalf("writeCover() = %q, %v; want %q, nil", path, err, existing)
+	}
+	if requested {
+		t.Fatal("writeCover() requested an existing cover")
 	}
 	data, readErr := os.ReadFile(existing)
 	if readErr != nil {
@@ -161,4 +166,3 @@ func TestGetProgName(t *testing.T) {
 		}
 	}
 }
-

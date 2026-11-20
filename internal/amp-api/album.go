@@ -31,10 +31,11 @@ func GetAlbumResp(storefront string, id string, language string, token string) (
 	query.Set("omit[resource]", "autos")
 	query.Set("include", "tracks,artists,record-labels")
 	query.Set("include[songs]", "artists")
+	query.Set("meta[albums:tracks]", "popularity")
 	//query.Set("fields[artists]", "name,artwork")
 	//query.Set("fields[albums:albums]", "artistName,artwork,name,releaseDate,url")
 	//query.Set("fields[record-labels]", "name")
-	query.Set("extend", "editorialVideo,extendedAssetUrls")
+	query.Set("extend", "editorialVideo,extendedAssetUrls,editorialNotes,plainEditorialNotes")
 	query.Set("l", language)
 	req.URL.RawQuery = query.Encode()
 	do, err := download.Client.Do(req)
@@ -60,6 +61,7 @@ func GetAlbumResp(storefront string, id string, language string, token string) (
 			obj.Data[0].Relationships.Tracks.Data = append(obj.Data[0].Relationships.Tracks.Data, obj2.Data...)
 			next = obj2.Next
 			if len(next) == 0 {
+				obj.Data[0].Relationships.Tracks.Next = ""
 				break
 			}
 		}
@@ -78,6 +80,7 @@ func fetchTrackPage(next string, token string) (*TrackResp, error) {
 	query := req.URL.Query()
 	query.Set("omit[resource]", "autos")
 	query.Set("include", "artists")
+	query.Set("meta[albums:tracks]", "popularity")
 	query.Set("extend", "editorialVideo,extendedAssetUrls")
 	req.URL.RawQuery = query.Encode()
 
@@ -116,10 +119,11 @@ func GetAlbumRespByHref(href string, language string, token string) (*AlbumResp,
 	query.Set("omit[resource]", "autos")
 	query.Set("include", "tracks,artists,record-labels")
 	query.Set("include[songs]", "artists")
+	query.Set("meta[albums:tracks]", "popularity")
 	//query.Set("fields[artists]", "name,artwork")
 	//query.Set("fields[albums:albums]", "artistName,artwork,name,releaseDate,url")
 	//query.Set("fields[record-labels]", "name")
-	query.Set("extend", "editorialVideo,extendedAssetUrls")
+	query.Set("extend", "editorialVideo,extendedAssetUrls,editorialNotes,plainEditorialNotes")
 	query.Set("l", language)
 	req.URL.RawQuery = query.Encode()
 	do, err := download.Client.Do(req)
@@ -148,6 +152,7 @@ func GetAlbumRespByHref(href string, language string, token string) (*AlbumResp,
 			query := req.URL.Query()
 			query.Set("omit[resource]", "autos")
 			query.Set("include", "artists")
+			query.Set("meta[albums:tracks]", "popularity")
 			query.Set("extend", "editorialVideo,extendedAssetUrls")
 			req.URL.RawQuery = query.Encode()
 			do, err := download.Client.Do(req)
@@ -166,6 +171,7 @@ func GetAlbumRespByHref(href string, language string, token string) (*AlbumResp,
 			obj.Data[0].Relationships.Tracks.Data = append(obj.Data[0].Relationships.Tracks.Data, obj2.Data...)
 			next = obj2.Next
 			if len(next) == 0 {
+				obj.Data[0].Relationships.Tracks.Next = ""
 				break
 			}
 		}
@@ -209,23 +215,58 @@ type AlbumRespData struct {
 		Upc                  string   `json:"upc"`
 		AudioTraits          []string `json:"audioTraits"`
 		Copyright            string   `json:"copyright"`
-		PlayParams           struct {
+		EditorialNotes       struct {
+			Short    string `json:"short"`
+			Standard string `json:"standard"`
+		} `json:"editorialNotes"`
+		PlainEditorialNotes struct {
+			Short    string `json:"short"`
+			Standard string `json:"standard"`
+		} `json:"plainEditorialNotes"`
+		PlayParams struct {
 			ID   string `json:"id"`
 			Kind string `json:"kind"`
 		} `json:"playParams"`
 		IsCompilation  bool `json:"isCompilation"`
 		EditorialVideo struct {
+			MotionWide struct {
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
+			} `json:"motionWideVideo21x9"`
 			MotionTall struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionTallVideo3x4"`
 			MotionSquare struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionSquareVideo1x1"`
 			MotionDetailTall struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionDetailTall"`
 			MotionDetailSquare struct {
-				Video string `json:"video"`
+				Video        string `json:"video"`
+				PreviewFrame struct {
+					URL    string `json:"url"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"previewFrame"`
 			} `json:"motionDetailSquare"`
 		} `json:"editorialVideo"`
 	} `json:"attributes"`

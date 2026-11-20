@@ -1,6 +1,7 @@
 package app
 
 import (
+	ampapi "amdl/internal/amp-api"
 	"amdl/internal/download"
 	"amdl/internal/fsutil"
 	"amdl/internal/model"
@@ -31,6 +32,11 @@ func (r *Runner) writeCover(sanAlbumFolder, name string, url string) (string, er
 		covPath = filepath.Join(sanAlbumFolder, name+"."+ext)
 	} else {
 		covPath = filepath.Join(sanAlbumFolder, name+"."+r.Config.Metadata.Artwork.Format)
+	}
+	if exists, err := fileExists(covPath); err != nil {
+		return "", fmt.Errorf("check existing cover: %w", err)
+	} else if exists {
+		return covPath, nil
 	}
 	if r.Config.Metadata.Artwork.Format == "png" {
 		re := regexp.MustCompile(`\{w\}x\{h\}`)
@@ -146,7 +152,7 @@ func firstGenre(genres []string) string {
 	return genres[0]
 }
 
-func (r *Runner) writeMP4Tags(track *model.Track, lrc string) error {
+func (r *Runner) writeMP4Tags(track *model.Track, lrc string, credits ampapi.SongCredits) error {
 	t := &mp4tag.MP4Tags{
 		Title:  track.Resp.Attributes.Name,
 		Artist: track.Resp.Attributes.ArtistName,
@@ -163,6 +169,25 @@ func (r *Runner) writeMP4Tags(track *model.Track, lrc string) error {
 		TrackNumber: int16(track.Resp.Attributes.TrackNumber),
 		DiscNumber:  int16(track.Resp.Attributes.DiscNumber),
 		Album:       track.Resp.Attributes.AlbumName,
+	}
+
+	for role, names := range credits {
+		if len(names) == 0 {
+			continue
+		}
+		key := role
+		for existing := range t.Custom {
+			if strings.EqualFold(existing, key) {
+				// Keep existing custom fields intact, including when only case differs.
+				key = "Credit:" + role
+				break
+			}
+		}
+		if len(names) == 1 {
+			t.Custom[key] = names[0]
+		} else {
+			t.Custom[key] = strings.Join(names[:len(names)-1], ", ") + " & " + names[len(names)-1]
+		}
 	}
 
 	if r.Config.Metadata.Artwork.Embed && track.CoverPath != "" {
@@ -250,6 +275,7 @@ func (r *Runner) writeMP4Tags(track *model.Track, lrc string) error {
 		return err
 	}
 	defer mp4.Close()
+	mp4.UpperCustom(false)
 	err = mp4.Write(t, []string{})
 	if err != nil {
 		return err

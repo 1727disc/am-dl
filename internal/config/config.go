@@ -172,7 +172,6 @@ func Load(opts LoadOptions) (*Config, error) {
 		fmt.Printf("Warning: %s not found, using defaults\n", configFile)
 	}
 
-
 	// Layer 4: Command line flags (mapped to nested keys)
 	if opts.FlagSet != nil {
 		provider := posflag.ProviderWithFlag(opts.FlagSet, ".", k, func(f *pflag.Flag) (string, any) {
@@ -191,7 +190,6 @@ func Load(opts LoadOptions) (*Config, error) {
 	if err := k.Unmarshal("", &cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
-
 	// Backward compatibility fallback for migrated config keys
 	hasUserOrExample := func(key string) bool {
 		if userFileExists && userK != nil && userK.Exists(key) {
@@ -304,7 +302,7 @@ func (c *Config) Validate() error {
 		c.Paths.PlaylistFolder = "{PlaylistName}"
 	}
 	if c.Paths.SongFile == "" {
-		c.Paths.SongFile = "{SongNumer}. {SongName}"
+		c.Paths.SongFile = "{SongNumber}. {SongName}"
 	}
 
 	// Metadata
