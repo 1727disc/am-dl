@@ -407,7 +407,7 @@ metadata:
 
 ## Artist and release asset downloads
 
-`save-artist-extras` saves an artist's logo, color, and about section. `save-release-extras` saves album and playlist information, descriptions, and track lists in `release-extra/release-info.txt`, and embeds available song credits. Animated preview frames are saved when both `save-release-animated` and `save-release-extras` are enabled, or when both `save-artist-animated` and `save-artist-extras` are enabled.
+`save-artist-extras` saves an artist's logo, color, and about section. `save-release-extras` saves album and playlist information, descriptions, and track lists in `release-extra/release-info.txt`, and embeds available song credits. Animated preview frames are saved when both `save-release-animated` and `save-release-extras` are enabled, or when both `save-artist-animated` and `save-artist-extras` are enabled. Set `metadata.extras.orientation-motion-previews` to `false` to skip the square and tall release preview frames while keeping wide and video preview frames. Artist previews are unaffected.
 
 Configure extras settings under `metadata.extras` in `config.yaml`:
 
@@ -421,6 +421,20 @@ metadata:
     save-release-animated: true
     save-artist-animated: true
 ```
+
+Symbolic linking and album versioning are experimental and disabled by default. To share artwork, TTML lyrics, and artist and release information between codec folders, enable symbolic links and choose a Master folder:
+
+```yaml
+paths:
+  symlinking: true
+  master: "AM-Master"
+```
+
+New assets are saved under artist and release names in Master, with IDs to distinguish matching names. The codec folders contain links to those files. Existing files are left in place; LRC lyrics remain in the codec folder. Relative paths are resolved from the working directory. With `--save-m3u8-playlist`, separate playlists are stored in Master and linked into each output folder; their track paths are relative to that folder.
+
+Use `amdl --refresh <URL>` to choose which content to refresh. Use the arrow keys and space bar to select Audio, Lyrics, Covers, Motion Artwork, Album information, and/or Artist information, then press Enter. Only the selected categories are refreshed. Music videos and station streams are not refreshed by this option.
+
+To keep a separate copy when downloading an album whose folder already exists, set `paths.versioning: true`. Duplicate album folders receive a timestamp. Retries use the same folder; song-only, lyrics-only, and `--refresh` runs continue using the original folder.
 
 ## Upgrade
 

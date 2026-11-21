@@ -19,6 +19,7 @@ type Flags struct {
 	PrintJSON      bool
 	SaveM3U8       bool
 	LyricOnly      bool
+	Refresh        bool
 	LiteServerFlag string
 	Version        bool
 	Update         bool
@@ -35,10 +36,15 @@ type State struct {
 }
 
 type Runner struct {
-	Config              config.ConfigSet
-	Flags               Flags
-	State               State
-	artistVideoAttempts map[artistVideoAttempt]bool
+	Config               config.ConfigSet
+	Flags                Flags
+	State                State
+	artistVideoAttempts  map[artistVideoAttempt]bool
+	sharedAssetDirs      map[string]string
+	coverRefreshAttempts map[string]bool
+	artistInfoAttempts   map[artistVideoAttempt]bool
+	refreshSelection     map[string]bool
+	albumVersionDirs     map[string]string
 }
 
 type artistVideoAttempt struct {
@@ -86,4 +92,13 @@ func fileExists(path string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// wantsRefresh reports whether a category was selected in refresh mode.
+func (r *Runner) wantsRefresh(category string) bool {
+	return r.Flags.Refresh && r.refreshSelection[category]
+}
+
+func (r *Runner) downloadCategory(category string) bool {
+	return !r.Flags.Refresh || r.wantsRefresh(category)
 }

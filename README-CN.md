@@ -420,7 +420,7 @@ metadata:
 
 ## 歌手、专辑和播放列表素材下载
 
-`save-artist-extras` 保存歌手的标志、颜色和简介。`save-release-extras` 将专辑和播放列表的信息、简介及曲目列表保存到 `release-extra/release-info.txt`，并在有数据时将歌曲制作人员信息嵌入歌曲元数据。同时启用 `save-release-animated` 和 `save-release-extras` 时会保存专辑或播放列表的动态封面预览帧；同时启用 `save-artist-animated` 和 `save-artist-extras` 时会保存歌手的预览帧。
+`save-artist-extras` 保存歌手的标志、颜色和简介。`save-release-extras` 将专辑和播放列表的信息、简介及曲目列表保存到 `release-extra/release-info.txt`，并在有数据时将歌曲制作人员信息嵌入歌曲元数据。同时启用 `save-release-animated` 和 `save-release-extras` 时会保存专辑或播放列表的动态封面预览帧；同时启用 `save-artist-animated` 和 `save-artist-extras` 时会保存歌手的预览帧。 将 `metadata.extras.orientation-motion-previews` 设为 `false` 可跳过方形和竖向作品预览帧，同时保留宽屏及视频预览帧；歌手预览帧不受影响。
 
 在 `config.yaml` 的 `metadata.extras` 下配置附加素材，并在 `metadata.artwork` 下配置动态封面：
 
@@ -434,6 +434,20 @@ metadata:
     save-release-animated: true           # 保存专辑、播放列表和电台的动态封面
     save-artist-animated: true            # 保存歌手动态封面
 ```
+
+符号链接和专辑版本管理为实验性功能，默认关闭。如需在不同音质文件夹之间共享封面、动态素材、TTML 歌词以及歌手和作品信息，可启用符号链接并设置 Master 文件夹：
+
+```yaml
+paths:
+  symlinking: true
+  master: "AM-Master"
+```
+
+新素材会按歌手和作品名称保存在 Master 中，并附带 ID 以区分同名内容。各音质文件夹中会创建指向这些文件的链接；已有文件保留在原处，LRC 歌词仍保存在音质文件夹中。相对路径以当前工作目录为基准。 启用 `--save-m3u8-playlist` 后，每个输出文件夹的播放列表会分别保存在 Master 中，并链接回对应文件夹。播放列表中的歌曲路径相对于对应的输出文件夹。
+
+使用 `amdl --refresh <URL>` 选择要刷新的内容。使用方向键和空格选择音频、歌词、封面、动态素材、专辑信息和/或歌手信息，然后按 Enter。仅刷新所选类别；音乐视频和电台流不包含在内。
+
+设置 `paths.versioning: true` 后，下载文件夹已存在的专辑时会创建带时间戳的文件夹。重试使用同一文件夹；单曲、仅歌词和 `--refresh` 仍使用原文件夹。
 
 ## 升级
 

@@ -37,13 +37,15 @@ func artistLogoImageURL(template, size string) (string, error) {
 
 func (r *Runner) saveArtistLogo(dir, logo string, width, height int) error {
 	path := filepath.Join(dir, "logo.png")
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
 	if logo == "" {
 		return nil
+	}
+	if !r.wantsRefresh("Artist information") {
+		if exists, err := fileExists(path); err != nil {
+			return err
+		} else if exists {
+			return nil
+		}
 	}
 	size := r.Config.Metadata.Artwork.Size
 	if width > 0 && height > 0 {
@@ -71,20 +73,30 @@ func (r *Runner) saveArtistLogo(dir, logo string, width, height int) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	changed, err := updateAssetFromTemp(tmp.Name(), path)
+	if err != nil {
 		return err
 	}
-	fmt.Println("Artist logo saved")
+	if changed {
+		fmt.Println("Artist logo saved")
+	}
 	return nil
 }
 
-// saveArtistPreviewFrame downloads a PNG without replacing an existing frame.
-func (r *Runner) saveMotionPreviewFrame(dir, variant, template string, width, height int, label string) error {
+// saveMotionPreviewFrame refreshes a PNG only when its bytes change.
+func (r *Runner) saveMotionPreviewFrame(dir, variant, template string, width, height int, label string, deduplicate bool) error {
+	if deduplicate {
+		if err := deduplicateMotionFiles(dir, "_preview_frame.png"); err != nil {
+			return err
+		}
+	}
 	path := filepath.Join(dir, variant+"_preview_frame.png")
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
+	exists, err := fileExists(path)
+	if err != nil {
 		return err
+	}
+	if exists && !r.wantsRefresh("Motion Artwork") {
+		return nil
 	}
 	size := r.Config.Metadata.Artwork.Size
 	if width > 0 && height > 0 {
@@ -112,12 +124,28 @@ func (r *Runner) saveMotionPreviewFrame(dir, variant, template string, width, he
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	data, err := os.ReadFile(tmp.Name())
+	if exists || !deduplicate {
+		changed, err := updateAssetFromTemp(tmp.Name(), path)
+		if err != nil {
+			return err
+		}
+		if deduplicate {
+			if err := deduplicateMotionFiles(dir, "_preview_frame.png"); err != nil {
+				return err
+			}
+		}
+		if changed {
+			fmt.Println(label + " motion preview frame saved")
+		}
+		return nil
+	}
+	saved, err := saveUniqueMotionFile(tmp.Name(), path, "_preview_frame.png")
 	if err != nil {
 		return err
 	}
-	if err := writeFileIfAbsent(path, data); err != nil {
-		return err
+	if !saved {
+		fmt.Println(label + " motion preview frame already saved.")
+		return nil
 	}
 	fmt.Println(label + " motion preview frame saved")
 	return nil

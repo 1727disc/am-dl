@@ -31,6 +31,9 @@ media:
 # 3. Storage Paths & Templates (Save Folders & Naming Templates)
 # ------------------------------------------------------------------------------
 paths:
+  symlinking: false                       # Experimental: share artwork, TTML, and information through symbolic links
+  versioning: false                       # Experimental: timestamp duplicate album downloads
+  master: "AM-Master"                     # Shared assets folder when symlinking is enabled
   alac: "AM-Lossless"                     # Save folder for ALAC (Lossless / Hi-Res) downloads
   atmos: "AM-Atmos"                       # Save folder for Dolby Atmos (Spatial Audio) downloads
   aac: "AM-AAC"                           # Save folder for AAC downloads
@@ -60,6 +63,7 @@ metadata:
   extras:
     save-release-extras: false             # Save album/playlist information and available preview frames in release-extra, and embed song credits
     save-artist-extras: false             # Save available artist logo, biography, static animated frames (if animated is enabled), and key color in artist-extra
+    orientation-motion-previews: true    # Save square and tall release preview frames in addition to video previews
 
   lyrics:
     save-file: false                      # Save .lrc or .ttml file to disk

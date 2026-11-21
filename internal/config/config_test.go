@@ -29,6 +29,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Paths.Alac != "AM-Lossless" {
 		t.Errorf("Paths.Alac = %q, want 'AM-Lossless'", cfg.Paths.Alac)
 	}
+	if !cfg.Metadata.Extras.OrientationMotionPreviews {
+		t.Error("orientation motion previews should default to true")
+	}
+	if cfg.Paths.Versioning {
+		t.Error("versioning must default to false")
+	}
+	if cfg.Paths.Symlinking || cfg.Paths.Master != "AM-Master" {
+		t.Errorf("shared paths = enabled %v, master %q; want false and AM-Master", cfg.Paths.Symlinking, cfg.Paths.Master)
+	}
 	if cfg.Paths.AlbumFolder != "{AlbumName}" {
 		t.Errorf("Paths.AlbumFolder = %q, want '{AlbumName}'", cfg.Paths.AlbumFolder)
 	}
@@ -86,6 +95,13 @@ general:
   lite-server: http://localhost:8080
 media:
   alac-max: 96000
+paths:
+  symlinking: true
+  versioning: true
+  master: /shared/Master
+metadata:
+  extras:
+    orientation-motion-previews: false
 `
 	exampleFile := filepath.Join(dir, "config.yaml.example")
 	userFile := filepath.Join(dir, "config.yaml")
@@ -115,6 +131,15 @@ media:
 	}
 	if cfg.Media.AlacMax != 96000 {
 		t.Errorf("Media.AlacMax = %d, want 96000", cfg.Media.AlacMax)
+	}
+	if cfg.Metadata.Extras.OrientationMotionPreviews {
+		t.Error("orientation-motion-previews false was not loaded")
+	}
+	if !cfg.Paths.Versioning {
+		t.Error("versioning was not loaded")
+	}
+	if !cfg.Paths.Symlinking || cfg.Paths.Master != "/shared/Master" {
+		t.Errorf("shared paths were not loaded: enabled %v, master %q", cfg.Paths.Symlinking, cfg.Paths.Master)
 	}
 	// Inherited from example config
 	if cfg.General.Storefront != "jp" {

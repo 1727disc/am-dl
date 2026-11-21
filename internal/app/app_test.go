@@ -27,6 +27,360 @@ type searchRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f searchRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+func requireSymlinks(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "target"), []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(dir, "link")); err != nil {
+		t.Skipf("symbolic links unavailable: %v", err)
+	}
+}
+
+func TestSharedAssetPaths(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Paths.Symlinking = true
+	cfg.Paths.Master = root
+	r := NewRunner(cfg)
+	if err := r.registerSharedAssetDir(filepath.Join(root, "Lossless"), filepath.Join(root, "Master", "Artist")); err == nil {
+		t.Fatal("Master overlapping an output folder must be rejected")
+	}
+	name := assetFolderName(strings.Repeat("歌", 200), "12345")
+	if len(name) > 210 || !strings.Contains(name, "[12345]") {
+		t.Fatalf("unexpected long asset folder name: %q (%d bytes)", name, len(name))
+	}
+}
+
+func TestSharedAssetsAcrossCodecs(t *testing.T) {
+	requireSymlinks(t)
+	root := t.TempDir()
+	master := filepath.Join(root, "Master")
+	coverRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		coverRequests++
+		_, _ = w.Write([]byte("cover bytes"))
+	}))
+	defer server.Close()
+	original := download.Client
+	t.Cleanup(func() { download.Client = original })
+	download.Client = server.Client()
+	cfg := config.Default()
+	cfg.Paths.Symlinking, cfg.Paths.Master = true, master
+	cfg.Metadata.Artwork.Format = "jpg"
+	cfg.Metadata.Lyrics.Format = "ttml"
+	r := NewRunner(cfg)
+	masterArtist := filepath.Join(master, "Artist [123]")
+	masterRelease := filepath.Join(masterArtist, "Album [456]")
+	var album ampapi.AlbumRespData
+	album.Attributes.Name = "Album"
+	track := &model.Track{ID: "789"}
+	track.Resp.Attributes.Name = "Track"
+	var sharedLyric, sharedVideo, sharedInfo, sharedArtist string
+	for _, codec := range []string{"Lossless", "AAC", "Atmos"} {
+		artistDir := filepath.Join(root, codec, "Artist")
+		albumDir := filepath.Join(artistDir, "Album")
+		if err := os.MkdirAll(albumDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.registerSharedAssetDir(artistDir, masterArtist); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.registerSharedAssetDir(albumDir, masterRelease); err != nil {
+			t.Fatal(err)
+		}
+		if codec == "Atmos" {
+			if err := os.WriteFile(filepath.Join(albumDir, "cover.jpg"), []byte("existing cover"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cover, err := r.writeCover(albumDir, "cover", server.URL+"/{w}x{h}.jpg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if codec == "Atmos" {
+			if info, err := os.Lstat(cover); err != nil || !info.Mode().IsRegular() {
+				t.Fatalf("existing cover changed: %v", err)
+			}
+			if data, err := os.ReadFile(cover); err != nil || string(data) != "existing cover" {
+				t.Fatalf("existing cover changed: %q %v", data, err)
+			}
+		} else if info, err := os.Lstat(cover); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("cover is not a symlink: %v", err)
+		}
+		lyricName := "01. Track " + codec + ".ttml"
+		if err := r.writeLyrics(albumDir, lyricName, "<tt>shared</tt>", track); err != nil {
+			t.Fatal(err)
+		}
+		manual := filepath.Join(albumDir, "existing.ttml")
+		if err := os.WriteFile(manual, []byte("existing lyrics"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.writeLyrics(albumDir, "existing.ttml", "replacement", track); err != nil {
+			t.Fatal(err)
+		}
+		if data, err := os.ReadFile(manual); err != nil || string(data) != "existing lyrics" {
+			t.Fatalf("existing lyrics changed: %q, %v", data, err)
+		}
+		if err := r.writeLyrics(albumDir, "local.lrc", "local lyrics", track); err != nil {
+			t.Fatal(err)
+		}
+		if info, err := os.Lstat(filepath.Join(albumDir, "local.lrc")); err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("LRC should stay local: %v", err)
+		}
+		if cached, found, err := r.cachedSharedLyrics(albumDir, track); err != nil || !found || cached != "<tt>shared</tt>" {
+			t.Fatalf("cached lyrics %q, %v, %v", cached, found, err)
+		}
+		if err := r.withSharedAssets(albumDir, "release-extra", func(dir string) error { return saveFullAlbumInfo(dir, &album) }); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.withSharedAssets(albumDir, "", func(dir string) error {
+			return writeFileIfAbsent(filepath.Join(dir, "square_animated_artwork.mp4"), []byte("motion"))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.withSharedAssets(filepath.Join(albumDir, "release-extra"), "", func(dir string) error {
+			return writeFileIfAbsent(filepath.Join(dir, "square_preview_frame.png"), []byte("preview"))
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.withSharedAssets(artistDir, "artist-extra", func(dir string) error {
+			extra := filepath.Join(dir, "artist-extra")
+			if err := os.MkdirAll(extra, 0755); err != nil {
+				return err
+			}
+			for _, name := range []string{"logo.png", "biography.txt", "colors.json", "artist_wide_animated_artwork.mp4"} {
+				if err := writeFileIfAbsent(filepath.Join(extra, name), []byte(name)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		for _, check := range []struct {
+			path   string
+			shared *string
+		}{
+			{filepath.Join(albumDir, lyricName), &sharedLyric},
+			{filepath.Join(albumDir, "square_animated_artwork.mp4"), &sharedVideo},
+			{filepath.Join(albumDir, "release-extra", "release-info.txt"), &sharedInfo},
+			{filepath.Join(artistDir, "artist-extra", "biography.txt"), &sharedArtist},
+		} {
+			info, err := os.Lstat(check.path)
+			if err != nil || info.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("%s is not a symlink: %v", check.path, err)
+			}
+			resolved, err := filepath.EvalSymlinks(check.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if *check.shared == "" {
+				*check.shared = resolved
+			} else if *check.shared != resolved {
+				t.Fatalf("%s resolves to different asset", check.path)
+			}
+		}
+	}
+	if coverRequests != 1 {
+		t.Fatalf("cover downloaded %d times, want once", coverRequests)
+	}
+}
+
+func TestLyricsOnlyReusesMasterAcrossRuns(t *testing.T) {
+	requireSymlinks(t)
+	original := download.Client
+	t.Cleanup(func() { download.Client = original })
+	lyricsRequests := 0
+	download.Client = &http.Client{Transport: searchRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var body string
+		switch req.URL.Path {
+		case "/v1/catalog/us/albums/123":
+			body = `{"data":[{"attributes":{"name":"Album","artistName":"Artist"},"relationships":{"tracks":{"data":[{"id":"111","type":"songs","attributes":{"name":"Track","artistName":"Artist","trackNumber":1,"discNumber":1}}]}}}]}`
+		case "/lyrics":
+			lyricsRequests++
+			body = `{"code":0,"data":{"lyrics":"<tt>shared</tt>"}}`
+		default:
+			t.Errorf("unexpected request: %s", req.URL.Path)
+			return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Paths.Symlinking = true
+	cfg.Paths.Master = filepath.Join(root, "Master")
+	cfg.Paths.Alac, cfg.Paths.Aac = filepath.Join(root, "Lossless"), filepath.Join(root, "AAC")
+	cfg.Paths.ArtistFolder, cfg.Paths.AlbumFolder, cfg.Paths.SongFile = "{ArtistName}", "{AlbumName}", "{SongNumber}. {SongName}"
+	cfg.General.LiteServer = "http://wrapper.test"
+	cfg.Metadata.Lyrics.Format = "ttml"
+	for _, aac := range []bool{false, true} {
+		r := NewRunner(cfg)
+		r.Flags.LyricOnly, r.Flags.AAC = true, aac
+		if err := r.ripAlbum("123", "test-token", "us", "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var first string
+	for _, codec := range []string{"Lossless", "AAC"} {
+		path := filepath.Join(root, codec, "Artist", "Album", "01. Track.ttml")
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s is not a symlink: %v", path, err)
+		}
+		target, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first == "" {
+			first = target
+		} else if first != target {
+			t.Fatalf("different Master lyrics: %s and %s", first, target)
+		}
+	}
+	if lyricsRequests != 1 {
+		t.Fatalf("lyrics requested %d times, want once", lyricsRequests)
+	}
+}
+
+func TestDeduplicateMotionFiles(t *testing.T) {
+	dir := t.TempDir()
+	content := bytes.Repeat([]byte("motion artwork"), 20000)
+	different := append([]byte(nil), content...)
+	different[len(different)-1] ^= 1
+	files := map[string][]byte{
+		"square_preview_frame.png":       content,
+		"square_video_preview_frame.png": content,
+		"tall_preview_frame.png":         different,
+		"cover.png":                      content,
+		"song.m4a":                       content,
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := deduplicateMotionFiles(dir, "_preview_frame.png"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "square_video_preview_frame.png")); !os.IsNotExist(err) {
+		t.Fatalf("duplicate remains: %v", err)
+	}
+	for _, name := range []string{"square_preview_frame.png", "tall_preview_frame.png", "cover.png", "song.m4a"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("%s was not preserved: %v", name, err)
+		}
+	}
+	temporary := filepath.Join(dir, "download.tmp")
+	if err := os.WriteFile(temporary, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := duplicateMotionFile(temporary, "_preview_frame.png")
+	if err != nil || filepath.Base(duplicate) != "square_preview_frame.png" {
+		t.Fatalf("duplicate = %q, err = %v", duplicate, err)
+	}
+	if err := os.WriteFile(temporary, []byte("different"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if duplicate, err := duplicateMotionFile(temporary, "_preview_frame.png"); err != nil || duplicate != "" {
+		t.Fatalf("distinct file matched %q, err = %v", duplicate, err)
+	}
+}
+
+func TestMotionDuplicatesKeepShortestName(t *testing.T) {
+	dir := t.TempDir()
+	data := []byte("identical motion")
+	longName := filepath.Join(dir, "aaaa_long_preview_frame.png")
+	shortName := filepath.Join(dir, "z_preview_frame.png")
+	if err := os.WriteFile(longName, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(shortName, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := deduplicateMotionFiles(dir, "_preview_frame.png"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(shortName); err != nil {
+		t.Fatalf("short filename missing: %v", err)
+	}
+	if _, err := os.Stat(longName); !os.IsNotExist(err) {
+		t.Fatalf("long filename remains: %v", err)
+	}
+
+	// A short-named download must replace an identical longer-named file.
+	if err := os.Remove(shortName); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(longName, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(dir, "download.tmp")
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := saveUniqueMotionFile(tmp, shortName, "_preview_frame.png")
+	if err != nil || !saved {
+		t.Fatalf("save shorter name: saved=%v err=%v", saved, err)
+	}
+	if _, err := os.Stat(shortName); err != nil {
+		t.Fatalf("short filename missing: %v", err)
+	}
+	if _, err := os.Stat(longName); !os.IsNotExist(err) {
+		t.Fatalf("long filename remains: %v", err)
+	}
+
+	// The longer name is skipped when the short copy already exists.
+	saved, err = saveUniqueMotionFile(tmp, longName, "_preview_frame.png")
+	if err != nil || saved {
+		t.Fatalf("save longer name: saved=%v err=%v", saved, err)
+	}
+	if _, err := os.Stat(longName); !os.IsNotExist(err) {
+		t.Fatalf("long filename was created: %v", err)
+	}
+}
+
+func TestArtistMotionKeepsIdenticalVariants(t *testing.T) {
+	artistDir := t.TempDir()
+	dir := filepath.Join(artistDir, "artist-extra")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, variant := range []string{"artist_wide", "artist_fullscreen"} {
+		for _, suffix := range []string{"_animated_artwork.mp4", "_preview_frame.png"} {
+			if err := os.WriteFile(filepath.Join(dir, variant+suffix), []byte("identical"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	original := download.Client
+	t.Cleanup(func() { download.Client = original })
+	requests := 0
+	download.Client = &http.Client{Transport: searchRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		body := `{"data":[{"id":"123","attributes":{"name":"Artist"}}]}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})}
+	r := NewRunner(config.Default())
+	r.Config.Metadata.Artwork.SaveArtistAnimated = true
+	for i := 0; i < 2; i++ {
+		if err := r.saveArtistDetails(artistDir, "us", "123", "unused-token", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if requests != 1 {
+		t.Fatalf("artist metadata requests = %d, want 1", requests)
+	}
+	for _, variant := range []string{"artist_wide", "artist_fullscreen"} {
+		for _, suffix := range []string{"_animated_artwork.mp4", "_preview_frame.png"} {
+			if _, err := os.Stat(filepath.Join(dir, variant+suffix)); err != nil {
+				t.Errorf("%s%s was not preserved: %v", variant, suffix, err)
+			}
+		}
+	}
+}
+
 func TestMixedTopSearch(t *testing.T) {
 	original := download.Client
 	t.Cleanup(func() { download.Client = original })
@@ -350,41 +704,100 @@ func TestFlagValueFromArgs(t *testing.T) {
 	}
 }
 
-func TestWriteCoverReusesExisting(t *testing.T) {
+func TestWriteCoverRefreshesExisting(t *testing.T) {
 	dir := t.TempDir()
 	existing := filepath.Join(dir, "cover.jpg")
 	if err := os.WriteFile(existing, []byte("old"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	originalClient := download.Client
-	t.Cleanup(func() {
-		download.Client = originalClient
-	})
-	r := NewRunner(config.ConfigSet{})
-	r.Config.Metadata.Artwork.Format = "jpg"
-	r.Config.Metadata.Artwork.Size = "600x600"
-	requested := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requested = true
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
+	t.Cleanup(func() { download.Client = originalClient })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("new")) }))
 	defer server.Close()
 	download.Client = server.Client()
-
+	r := NewRunner(config.Default())
+	r.Flags.Refresh = true
+	r.refreshSelection = map[string]bool{"Covers": true}
+	r.Config.Metadata.Artwork.Format = "jpg"
 	path, err := r.writeCover(dir, "cover", server.URL+"/image/{w}x{h}.jpg")
 	if err != nil || path != existing {
-		t.Fatalf("writeCover() = %q, %v; want %q, nil", path, err, existing)
+		t.Fatalf("writeCover() = %q, %v", path, err)
 	}
-	if requested {
-		t.Fatal("writeCover() requested an existing cover")
+	data, err := os.ReadFile(existing)
+	if err != nil || string(data) != "new" {
+		t.Fatalf("cover = %q, %v", data, err)
 	}
-	data, readErr := os.ReadFile(existing)
-	if readErr != nil {
-		t.Fatal(readErr)
+}
+
+func TestLyricsRefreshUpdatesSharedAndExistingFiles(t *testing.T) {
+	requireSymlinks(t)
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Paths.Symlinking = true
+	cfg.Paths.Master = filepath.Join(dir, "master")
+	r := NewRunner(cfg)
+	local := filepath.Join(dir, "lossless")
+	if err := os.MkdirAll(local, 0755); err != nil {
+		t.Fatal(err)
 	}
-	if string(data) != "old" {
-		t.Fatalf("existing cover changed to %q", string(data))
+	if err := r.registerSharedAssetDir(local, filepath.Join(cfg.Paths.Master, "release")); err != nil {
+		t.Fatal(err)
+	}
+	track := &model.Track{ID: "123", Storefront: "us"}
+	track.Resp.Attributes.Name = "Song"
+	if err := r.writeLyrics(local, "song.ttml", "old", track); err != nil {
+		t.Fatal(err)
+	}
+	r.Flags.Refresh = true
+	r.refreshSelection = map[string]bool{"Lyrics": true}
+	if err := r.writeLyrics(local, "song.ttml", "new", track); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(local, "song.ttml")); err != nil || string(data) != "new" {
+		t.Fatalf("lyrics = %q, %v", data, err)
+	}
+	if info, err := os.Lstat(filepath.Join(local, "song.ttml")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("lyrics link lost: %v", err)
+	}
+}
+
+func TestAssetRefreshPreservesSymlinks(t *testing.T) {
+	requireSymlinks(t)
+	dir := t.TempDir()
+	master := filepath.Join(dir, "master", "cover.jpg")
+	if err := os.MkdirAll(filepath.Dir(master), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(master, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "lossless", "cover.jpg")
+	if err := linkSharedFile(master, link); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "download")
+	if err := os.WriteFile(source, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := updateAssetFromTemp(source, link)
+	if err != nil || !changed {
+		t.Fatalf("refresh: %v, changed %v", err, changed)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("link not preserved: %v", err)
+	}
+	if data, err := os.ReadFile(master); err != nil || string(data) != "new" {
+		t.Fatalf("master = %q, %v", data, err)
+	}
+	changed, err = updateAssetFromTemp(source, link)
+	if err != nil || changed {
+		t.Fatalf("unchanged refresh: %v, changed %v", err, changed)
+	}
+	if _, err := updateAssetFromTemp(filepath.Join(dir, "missing"), link); err == nil {
+		t.Fatal("missing download succeeded")
+	}
+	if data, err := os.ReadFile(link); err != nil || string(data) != "new" {
+		t.Fatalf("failed refresh damaged asset: %q, %v", data, err)
 	}
 }
 

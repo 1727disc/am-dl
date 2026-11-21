@@ -6,6 +6,8 @@ import (
 	"amdl/internal/fsutil"
 	"amdl/internal/model"
 	"amdl/internal/wrapper"
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"github.com/grafov/m3u8"
@@ -33,9 +35,54 @@ func (r *Runner) writeCover(sanAlbumFolder, name string, url string) (string, er
 	} else {
 		covPath = filepath.Join(sanAlbumFolder, name+"."+r.Config.Metadata.Artwork.Format)
 	}
-	if exists, err := fileExists(covPath); err != nil {
-		return "", fmt.Errorf("check existing cover: %w", err)
-	} else if exists {
+	if !r.wantsRefresh("Covers") {
+		if exists, err := fileExists(covPath); err != nil {
+			return "", err
+		} else if exists {
+			return covPath, nil
+		}
+	}
+	absPath, err := filepath.Abs(covPath)
+	if err != nil {
+		return "", err
+	}
+	refreshKey := absPath + "\x00" + originalUrl
+	if r.coverRefreshAttempts[refreshKey] {
+		if exists, err := fileExists(covPath); err != nil {
+			return "", err
+		} else if exists {
+			return covPath, nil
+		}
+	}
+	if master, shared, err := r.sharedAssetDir(sanAlbumFolder); err != nil {
+		return "", err
+	} else if shared {
+		if err := os.MkdirAll(master, 0755); err != nil {
+			return "", err
+		}
+		// The Master directory is not registered as a local output directory.
+		sharedPath, err := r.writeCover(master, name, originalUrl)
+		if err != nil {
+			return "", err
+		}
+		localInfo, statErr := os.Lstat(covPath)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return "", statErr
+		}
+		if statErr == nil && localInfo.Mode().IsRegular() && r.wantsRefresh("Covers") {
+			if _, err := updateAssetFromTemp(sharedPath, covPath); err != nil {
+				return "", err
+			}
+		} else if err := linkSharedFile(sharedPath, covPath); err != nil {
+			return "", err
+		}
+		if _, err := os.Stat(covPath); err != nil {
+			return "", fmt.Errorf("existing cover link is unavailable: %w", err)
+		}
+		if r.coverRefreshAttempts == nil {
+			r.coverRefreshAttempts = make(map[string]bool)
+		}
+		r.coverRefreshAttempts[refreshKey] = true
 		return covPath, nil
 	}
 	if r.Config.Metadata.Artwork.Format == "png" {
@@ -78,10 +125,13 @@ func (r *Runner) writeCover(sanAlbumFolder, name string, url string) (string, er
 	if err := tmpFile.Close(); err != nil {
 		return "", err
 	}
-	if err := os.Rename(tmpPath, covPath); err != nil {
+	if _, err := updateAssetFromTemp(tmpPath, covPath); err != nil {
 		return "", err
 	}
-	cleanup = false
+	if r.coverRefreshAttempts == nil {
+		r.coverRefreshAttempts = make(map[string]bool)
+	}
+	r.coverRefreshAttempts[refreshKey] = true
 	return covPath, nil
 }
 
@@ -108,8 +158,49 @@ func (r *Runner) getCover(url string, out *os.File) error {
 	return nil
 }
 
-func (r *Runner) writeLyrics(sanAlbumFolder, filename string, lrc string) error {
+func (r *Runner) writeLyrics(sanAlbumFolder, filename string, lrc string, track *model.Track) error {
 	lyricspath := filepath.Join(sanAlbumFolder, filename)
+	if strings.EqualFold(filepath.Ext(filename), ".ttml") {
+		masterPath, shared, err := r.sharedLyricsPath(sanAlbumFolder, track)
+		if err != nil {
+			return err
+		}
+		if shared {
+			if _, err := os.Lstat(lyricspath); err == nil && !r.wantsRefresh("Lyrics") {
+				if _, err := os.Stat(lyricspath); err != nil {
+					return fmt.Errorf("existing lyrics link is unavailable: %w", err)
+				}
+				return nil
+			} else if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			dir := filepath.Dir(masterPath)
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return err
+			}
+			var writeErr error
+			if r.wantsRefresh("Lyrics") {
+				writeErr = writeChangedAsset(masterPath, []byte(lrc))
+			} else {
+				writeErr = writeFileIfAbsent(masterPath, []byte(lrc))
+			}
+			if err := writeErr; err != nil {
+				return err
+			}
+			if r.wantsRefresh("Lyrics") {
+				if info, err := os.Lstat(lyricspath); err == nil && info.Mode().IsRegular() {
+					_, err = updateAssetFromTemp(masterPath, lyricspath)
+					return err
+				} else if err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+			return linkSharedFile(masterPath, lyricspath)
+		}
+	}
+	if r.wantsRefresh("Lyrics") {
+		return writeChangedAsset(lyricspath, []byte(lrc))
+	}
 	f, err := os.Create(lyricspath)
 	if err != nil {
 		return err
@@ -127,22 +218,70 @@ func (r *Runner) writeM3UPlaylist(folderPath string, name string, tracks []Added
 		return nil
 	}
 	m3uPath := filepath.Join(folderPath, sanitizeFolderName(name)+".m3u8")
-	f, err := os.Create(m3uPath)
+	master, shared, err := r.sharedAssetDir(folderPath)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	fmt.Fprintln(f, "#EXTM3U")
+	var content bytes.Buffer
+	fmt.Fprintln(&content, "#EXTM3U")
 	for _, track := range tracks {
-		fmt.Fprintf(f, "#EXTINF:-1,%s - %s\n", track.Artist, track.Song)
+		fmt.Fprintf(&content, "#EXTINF:-1,%s - %s\n", track.Artist, track.Song)
 		rel, err := filepath.Rel(folderPath, track.Path)
 		if err == nil && !strings.HasPrefix(rel, "..") {
-			fmt.Fprintln(f, filepath.ToSlash(rel))
+			fmt.Fprintln(&content, filepath.ToSlash(rel))
 		} else {
-			fmt.Fprintln(f, filepath.Base(track.Path))
+			fmt.Fprintln(&content, filepath.Base(track.Path))
 		}
 	}
-	return nil
+	if !shared {
+		return writeChangedAsset(m3uPath, content.Bytes())
+	}
+	outputDir, err := filepath.Abs(folderPath)
+	if err != nil {
+		return err
+	}
+	digest := sha256.Sum256([]byte(outputDir))
+	playlistDir := filepath.Join(master, "Playlists", fmt.Sprintf("%x", digest[:12]))
+	if err := os.MkdirAll(playlistDir, 0755); err != nil {
+		return err
+	}
+	masterPath := filepath.Join(playlistDir, filepath.Base(m3uPath))
+	info, err := os.Lstat(m3uPath)
+	if err == nil && info.Mode()&os.ModeSymlink != 0 {
+		linked, resolveErr := filepath.EvalSymlinks(m3uPath)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		masterRoot, resolveErr := filepath.EvalSymlinks(filepath.Join(master, "Playlists"))
+		if resolveErr != nil {
+			return resolveErr
+		}
+		linked, resolveErr = filepath.Abs(linked)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		masterRoot, resolveErr = filepath.Abs(masterRoot)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		if !pathWithin(masterRoot, linked) {
+			return fmt.Errorf("existing playlist link does not point into Master: %s", m3uPath)
+		}
+		return writeChangedAsset(linked, content.Bytes())
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil && info.Mode().IsRegular() {
+		return writeChangedAsset(m3uPath, content.Bytes())
+	}
+	if err == nil {
+		return fmt.Errorf("existing playlist is not a regular file: %s", m3uPath)
+	}
+	if err := writeChangedAsset(masterPath, content.Bytes()); err != nil {
+		return err
+	}
+	return linkSharedFile(masterPath, m3uPath)
 }
 
 func firstGenre(genres []string) string {
@@ -744,6 +883,17 @@ func streamAllowedCPC(masterPlaylist string, variantURI string) string {
 			return attrs["ALLOWED-CPC"]
 		}
 		attrs = nil
+	}
+	return ""
+}
+
+// existingCoverPath finds a previously downloaded cover without fetching one.
+func existingCoverPath(dir string) string {
+	for _, ext := range []string{"jpg", "jpeg", "png", "webp"} {
+		path := filepath.Join(dir, "cover."+ext)
+		if exists, _ := fileExists(path); exists {
+			return path
+		}
 	}
 	return ""
 }

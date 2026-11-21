@@ -292,6 +292,9 @@ func (c *Config) Validate() error {
 	}
 
 	// Paths
+	if c.Paths.Symlinking && strings.TrimSpace(c.Paths.Master) == "" {
+		return errors.New("paths.master must be set when paths.symlinking is enabled")
+	}
 	if c.Paths.LimitMax == 0 {
 		c.Paths.LimitMax = 200
 	}

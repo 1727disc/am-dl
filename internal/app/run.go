@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/spf13/pflag"
 
 	ampapi "amdl/internal/amp-api"
@@ -34,6 +35,7 @@ func Main() {
 	pflag.BoolVar(&r.Flags.PrintJSON, "json", false, "Output JSON summary at the end")
 	pflag.BoolVar(&r.Flags.SaveM3U8, "save-m3u8-playlist", false, "Save M3U8 playlist file")
 	pflag.BoolVar(&r.Flags.LyricOnly, "lyric", false, "Download lyrics only, without songs or videos")
+	pflag.BoolVar(&r.Flags.Refresh, "refresh", false, "Choose existing content to refresh")
 	pflag.StringVar(&r.Flags.LiteServerFlag, "lite-server", "", "wrapper-lite HTTP API endpoint for this run")
 	pflag.Int("alac-max", 0, "Specify the max quality for download alac")
 	pflag.Int("atmos-max", 0, "Specify the max quality for download atmos")
@@ -105,6 +107,42 @@ func Main() {
 		return
 	}
 
+	if r.Flags.Refresh {
+		if r.Flags.LyricOnly {
+			fmt.Println("--refresh and --lyric cannot be used together.")
+			return
+		}
+		var selected []string
+		prompt := &survey.MultiSelect{Message: "What do you want to refresh?", Options: []string{"Audio", "Lyrics", "Covers", "Motion Artwork", "Album information", "Artist information"}}
+		if err := survey.AskOne(prompt, &selected); err != nil {
+			fmt.Printf("Refresh selection cancelled: %v\n", err)
+			return
+		}
+		if len(selected) == 0 {
+			fmt.Println("No refresh options selected.")
+			return
+		}
+		r.refreshSelection = make(map[string]bool)
+		for _, category := range selected {
+			r.refreshSelection[category] = true
+		}
+		if r.wantsRefresh("Motion Artwork") {
+			r.Config.Metadata.Artwork.SaveReleaseAnimated = true
+			r.Config.Metadata.Artwork.SaveArtistAnimated = true
+			r.Config.Metadata.Extras.SaveReleaseExtras = true
+			r.Config.Metadata.Extras.SaveArtistExtras = true
+		}
+		if r.wantsRefresh("Covers") {
+			r.Config.Metadata.Artwork.SaveArtist = true
+		}
+		if r.wantsRefresh("Artist information") {
+			r.Config.Metadata.Extras.SaveArtistExtras = true
+		}
+		if r.wantsRefresh("Album information") {
+			r.Config.Metadata.Extras.SaveReleaseExtras = true
+		}
+
+	}
 	updater.PrintStartupUpdateNotice(r.Config.General.Proxy)
 	if r.Flags.LiteServerFlag == "" {
 		r.Flags.LiteServerFlag = r.Config.General.LiteServer
@@ -173,7 +211,7 @@ func Main() {
 			return
 		}
 		var mvArgs []string
-		if !r.Flags.LyricOnly {
+		if !r.Flags.LyricOnly && !r.Flags.Refresh {
 			mvArgs, err = r.checkArtist(os.Args[0], token, "music-videos")
 			if err != nil {
 				fmt.Println("Failed to get artist music-videos.")
@@ -188,8 +226,8 @@ func Main() {
 			var storefront, albumId string
 
 			if strings.Contains(urlRaw, "/music-video/") {
-				if r.Flags.LyricOnly {
-					fmt.Println("Music video skipped in lyrics-only mode.")
+				if r.Flags.LyricOnly || r.Flags.Refresh {
+					fmt.Println("Music video skipped in this mode.")
 					continue
 				}
 				fmt.Println("Music Video")

@@ -42,6 +42,9 @@ type MVConfig struct {
 
 // PathsConfig holds destination folder paths and naming templates for downloaded content.
 type PathsConfig struct {
+	Symlinking     bool   `koanf:"symlinking"`
+	Versioning     bool   `koanf:"versioning"`
+	Master         string `koanf:"master"`
 	Alac           string `koanf:"alac"`
 	Atmos          string `koanf:"atmos"`
 	Aac            string `koanf:"aac"`
@@ -65,8 +68,9 @@ type MetadataConfig struct {
 }
 
 type ExtrasConfig struct {
-	SaveReleaseExtras bool `koanf:"save-release-extras"`
-	SaveArtistExtras  bool `koanf:"save-artist-extras"`
+	SaveReleaseExtras         bool `koanf:"save-release-extras"`
+	SaveArtistExtras          bool `koanf:"save-artist-extras"`
+	OrientationMotionPreviews bool `koanf:"orientation-motion-previews"`
 }
 
 // LyricsConfig holds lyrics fetching, formatting, and embedding options.

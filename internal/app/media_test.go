@@ -107,3 +107,85 @@ func TestSaveM3UPlaylist(t *testing.T) {
 	}
 }
 
+func TestSharedM3UPlaylistsUseTheirOwnQuality(t *testing.T) {
+	requireSymlinks(t)
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Paths.Symlinking = true
+	cfg.Paths.Master = filepath.Join(root, "Master")
+	r := NewRunner(cfg)
+	r.Flags.SaveM3U8 = true
+	master := filepath.Join(cfg.Paths.Master, "Artist", "Album")
+	var targets []string
+	for _, quality := range []string{"Lossless", "AAC", "Atmos"} {
+		dir := filepath.Join(root, quality, "Artist", "Album")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.registerSharedAssetDir(dir, master); err != nil {
+			t.Fatal(err)
+		}
+		track := filepath.Join(dir, "01. Song.m4a")
+		if err := os.WriteFile(track, []byte(quality), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.writeM3UPlaylist(dir, "Album", []AddedTrack{{Path: track, Song: "Song"}}); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(dir, "Album.m3u8")
+		info, err := os.Lstat(link)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("%s is not a link: %v", quality, err)
+		}
+		target, err := filepath.EvalSymlinks(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, target)
+		if err := r.writeM3UPlaylist(dir, "Album", []AddedTrack{{Path: track, Song: "Song"}}); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(target)
+		if err != nil || !strings.Contains(string(data), "01. Song.m4a") || strings.Contains(string(data), filepath.ToSlash(root)) {
+			t.Fatalf("%s playlist: %q, %v", quality, data, err)
+		}
+	}
+	if targets[0] == targets[1] || targets[1] == targets[2] || targets[0] == targets[2] {
+		t.Fatalf("quality playlists share a file: %v", targets)
+	}
+}
+
+func TestAlbumVersioningKeepsExistingAndRetriesSameFolder(t *testing.T) {
+	base := t.TempDir()
+	original := filepath.Join(base, "Album")
+	if err := os.Mkdir(original, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(original, "track.m4a")
+	if err := os.WriteFile(marker, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRunner(config.Default())
+	version, err := r.prepareAlbumFolder(base, "Album", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version == original || !strings.HasPrefix(filepath.Base(version), "Album [") {
+		t.Fatalf("unexpected version folder: %s", version)
+	}
+	retry, err := r.prepareAlbumFolder(base, "Album", true)
+	if err != nil || retry != version {
+		t.Fatalf("retry = %q, %v; want %q", retry, err, version)
+	}
+	next, err := NewRunner(config.Default()).prepareAlbumFolder(base, "Album", true)
+	if err != nil || next == version || next == original {
+		t.Fatalf("second version = %q, %v", next, err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "original" {
+		t.Fatalf("original changed: %q, %v", data, err)
+	}
+	plain, err := r.prepareAlbumFolder(base, "Album", false)
+	if err != nil || plain != original {
+		t.Fatalf("unversioned = %q, %v", plain, err)
+	}
+}

@@ -94,8 +94,14 @@ func (r *Runner) ripTrackLyrics(track *model.Track) {
 		r.State.Counter.Error++
 		return
 	}
-	if !exists {
-		text, err := lyrics.Get(track.ID, r.Config.Metadata.Lyrics.Type, r.Config.General.Language, r.Config.Metadata.Lyrics.Format, r.Config.General.LiteServer, r.Config.Metadata.Lyrics.Extra)
+	if !exists || r.wantsRefresh("Lyrics") {
+		text, cached, err := r.cachedSharedLyrics(track.SaveDir, track)
+		if r.wantsRefresh("Lyrics") {
+			cached = false
+		}
+		if err == nil && !cached {
+			text, err = lyrics.Get(track.ID, r.Config.Metadata.Lyrics.Type, r.Config.General.Language, r.Config.Metadata.Lyrics.Format, r.Config.General.LiteServer, r.Config.Metadata.Lyrics.Extra)
+		}
 		if errors.Is(err, lyrics.ErrLyricsNotFound) || (err == nil && text == "") {
 			fmt.Println("No lyrics available for this song")
 			r.State.Counter.Unavailable++
@@ -106,7 +112,7 @@ func (r *Runner) ripTrackLyrics(track *model.Track) {
 			r.State.Counter.Error++
 			return
 		}
-		if err := r.writeLyrics(track.SaveDir, filename, text); err != nil {
+		if err := r.writeLyrics(track.SaveDir, filename, text, track); err != nil {
 			fmt.Printf("Failed to save lyrics: %v\n", err)
 			r.State.Counter.Error++
 			return
@@ -125,6 +131,24 @@ func (r *Runner) ripTrackLyrics(track *model.Track) {
 }
 
 func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken string) {
+	if r.Flags.Refresh {
+		if track.Type == "music-videos" {
+			return
+		}
+		if r.wantsRefresh("Lyrics") {
+			previousOK := append([]int(nil), r.State.OKDict[track.PreID]...)
+			previousTracks := len(r.State.AddedTracks)
+			r.State.Counter.Total++
+			r.ripTrackLyrics(track)
+			if r.wantsRefresh("Audio") {
+				r.State.OKDict[track.PreID] = previousOK
+				r.State.AddedTracks = r.State.AddedTracks[:previousTracks]
+			}
+		}
+		if !r.wantsRefresh("Audio") {
+			return
+		}
+	}
 	var err error
 	r.State.Counter.Total++
 	fmt.Printf("Track %d of %d: %s\n", track.TaskNum, track.TaskTotal, track.Type)
@@ -217,7 +241,7 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 	if err != nil {
 		fmt.Println("Failed to check if track exists.")
 	}
-	if existsOriginal {
+	if existsOriginal && !r.wantsRefresh("Audio") {
 		fmt.Println("Track already exists locally.")
 		r.State.Counter.Success++
 		r.State.OKDict[track.PreID] = append(r.State.OKDict[track.PreID], track.TaskNum)
@@ -237,7 +261,7 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 	}
 	if considerConverted {
 		existsConverted, err2 := fileExists(convertedPath)
-		if err2 == nil && existsConverted {
+		if err2 == nil && existsConverted && !r.wantsRefresh("Audio") {
 			fmt.Println("Converted track already exists locally.")
 			r.State.Counter.Success++
 			r.State.OKDict[track.PreID] = append(r.State.OKDict[track.PreID], track.TaskNum)
@@ -257,6 +281,23 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 		}
 	}
 
+	finalTrackPath := trackPath
+	if r.wantsRefresh("Audio") {
+		tmp, err := os.CreateTemp(track.SaveDir, ".audio-refresh-*.m4a")
+		if err != nil {
+			fmt.Printf("Failed to create temporary audio: %v\n", err)
+			r.State.Counter.Error++
+			return
+		}
+		trackPath = tmp.Name()
+		if err := tmp.Close(); err != nil {
+			os.Remove(trackPath)
+			r.State.Counter.Error++
+			return
+		}
+		defer os.Remove(trackPath)
+	}
+
 	//提前获取到的播放列表下track所在的专辑信息
 	if track.PreType == "playlists" && r.Config.Metadata.Tags.UseSongInfoForPlaylist {
 		if err := track.GetAlbumData(token); err != nil {
@@ -270,9 +311,16 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 	// message) is handled once the download is done, or on early return.
 	var lrc string
 	var lyricsCh chan lyricsResult
-	if r.Config.Metadata.Lyrics.Embed || r.Config.Metadata.Lyrics.SaveFile {
+	if r.Config.Metadata.Lyrics.Embed || (r.Config.Metadata.Lyrics.SaveFile && (!r.Flags.Refresh || r.wantsRefresh("Lyrics"))) {
 		lyricsCh = make(chan lyricsResult, 1)
 		go func() {
+			if r.Config.Metadata.Lyrics.SaveFile {
+				cached, found, err := r.cachedSharedLyrics(track.SaveDir, track)
+				if err != nil || found {
+					lyricsCh <- lyricsResult{lrc: cached, err: err}
+					return
+				}
+			}
 			lrcStr, err := lyrics.Get(track.ID, r.Config.Metadata.Lyrics.Type, r.Config.General.Language, r.Config.Metadata.Lyrics.Format, r.Config.General.LiteServer, r.Config.Metadata.Lyrics.Extra)
 			lyricsCh <- lyricsResult{lrc: lrcStr, err: err}
 		}()
@@ -291,9 +339,9 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 			}
 			return
 		}
-		if r.Config.Metadata.Lyrics.SaveFile && res.lrc != "" {
-			if err := r.writeLyrics(track.SaveDir, lrcFilename, res.lrc); err != nil {
-				fmt.Printf("Failed to write lyrics")
+		if r.Config.Metadata.Lyrics.SaveFile && res.lrc != "" && (!r.Flags.Refresh || r.wantsRefresh("Lyrics")) {
+			if err := r.writeLyrics(track.SaveDir, lrcFilename, res.lrc, track); err != nil {
+				fmt.Printf("Failed to write lyrics: %v\n", err)
 			}
 		}
 		if r.Config.Metadata.Lyrics.Embed && res.lrc != "" {
@@ -387,6 +435,15 @@ func (r *Runner) ripTrack(track *model.Track, token string, mediaUserToken strin
 		}
 	}
 
+	if r.wantsRefresh("Audio") {
+		if _, err := updateAssetFromTemp(trackPath, finalTrackPath); err != nil {
+			fmt.Printf("Failed to save refreshed audio: %v\n", err)
+			r.State.Counter.Error++
+			return
+		}
+		track.SavePath = finalTrackPath
+	}
+
 	// CONVERSION FEATURE hook
 	r.convertIfNeeded(track)
 
@@ -472,11 +529,14 @@ func (r *Runner) ripStation(albumId string, token string, storefront string, med
 	if err != nil {
 		return err
 	}
+	if err := r.registerSharedAssetDir(playlistFolderPath, filepath.Join(r.Config.Paths.Master, "Stations", assetFolderName(r.LimitString(station.Name), station.ID))); err != nil {
+		return err
+	}
 	station.SaveName = playlistFolder
 	fmt.Println(playlistFolder)
 
 	var covPath string
-	if !r.Flags.LyricOnly {
+	if !r.Flags.LyricOnly && r.downloadCategory("Covers") {
 		covPath, err = r.writeCover(playlistFolderPath, "cover", meta.Data[0].Attributes.Artwork.URL)
 		if err != nil {
 			fmt.Println("Failed to write cover.")
@@ -484,10 +544,19 @@ func (r *Runner) ripStation(albumId string, token string, storefront string, med
 	}
 	station.CoverPath = covPath
 
-	if !r.Flags.LyricOnly && r.Config.Metadata.Artwork.SaveReleaseAnimated {
-		r.saveAnimatedArtwork(playlistFolderPath, meta.Data[0].Attributes.EditorialVideo.MotionSquare.Video, "")
+	if !r.Flags.LyricOnly && r.downloadCategory("Motion Artwork") && r.Config.Metadata.Artwork.SaveReleaseAnimated {
+		if err := r.withSharedAssets(playlistFolderPath, "", func(dir string) error {
+			r.saveAnimatedArtwork(dir, meta.Data[0].Attributes.EditorialVideo.MotionSquare.Video, "")
+			return nil
+		}); err != nil {
+			fmt.Printf("Failed to link station artwork: %v\n", err)
+		}
 	}
 	if station.Type == "stream" {
+		if r.Flags.Refresh {
+			fmt.Println("Station streams are not refreshed.")
+			return nil
+		}
 		startIdx := len(r.State.AddedTracks)
 		r.State.Counter.Total++
 		if contains(r.State.OKDict[station.ID], 1) {
@@ -728,6 +797,18 @@ func (r *Runner) ripAlbum(albumId string, token string, storefront string, media
 	if err := createDirectory(singerFolder); err != nil {
 		return err
 	}
+	artistID := ""
+	masterArtistName := meta.Data[0].Attributes.ArtistName
+	if len(meta.Data[0].Relationships.Artists.Data) > 0 {
+		artistID = meta.Data[0].Relationships.Artists.Data[0].ID
+		if name := meta.Data[0].Relationships.Artists.Data[0].Attributes.Name; name != "" {
+			masterArtistName = name
+		}
+	}
+	masterArtistDir := filepath.Join(r.Config.Paths.Master, assetFolderName(r.LimitString(masterArtistName), artistID))
+	if err := r.registerSharedAssetDir(singerFolder, masterArtistDir); err != nil {
+		return err
+	}
 	album.SaveDir = singerFolder
 	var Quality string
 	if !r.Flags.LyricOnly && strings.Contains(r.Config.Paths.AlbumFolder, "Quality") {
@@ -798,19 +879,35 @@ func (r *Runner) ripAlbum(albumId string, token string, storefront string, media
 		"{Tag}", Tag_string,
 	).Replace(tagPattern(r.Config.Paths.AlbumFolder, Tag_string))
 
-	albumFolderPath, err := r.prepareCollectionFolder(singerFolder, albumFolderName)
+	albumFolderPath, err := r.prepareAlbumFolder(singerFolder, albumFolderName, r.Config.Paths.Versioning && !r.Flags.Refresh && !r.Flags.LyricOnly && urlArg_i == "")
 	if err != nil {
+		return err
+	}
+	if err := r.registerSharedAssetDir(albumFolderPath, filepath.Join(masterArtistDir, assetFolderName(r.LimitString(meta.Data[0].Attributes.Name), albumId))); err != nil {
 		return err
 	}
 	album.SaveName = albumFolderName
 	fmt.Println(albumFolderName)
-	if !r.Flags.LyricOnly && r.Config.Metadata.Extras.SaveReleaseExtras {
-		if err := saveFullAlbumInfo(albumFolderPath, &meta.Data[0]); err != nil {
+	if !r.Flags.LyricOnly && r.Config.Metadata.Extras.SaveReleaseExtras && r.downloadCategory("Album information") {
+		if err := r.withSharedAssets(albumFolderPath, "release-extra", func(dir string) error {
+			if r.wantsRefresh("Album information") {
+				content, err := renderAlbumInfo(&meta.Data[0])
+				if err != nil {
+					return err
+				}
+				extra := filepath.Join(dir, "release-extra")
+				if err := os.MkdirAll(extra, 0755); err != nil {
+					return err
+				}
+				return writeChangedAsset(filepath.Join(extra, "release-info.txt"), []byte(content))
+			}
+			return saveFullAlbumInfo(dir, &meta.Data[0])
+		}); err != nil {
 			fmt.Printf("Failed to save album information: %v\n", err)
 		}
 	}
 
-	if !r.Flags.LyricOnly && r.Config.Metadata.Artwork.SaveArtist && len(meta.Data[0].Relationships.Artists.Data) > 0 {
+	if !r.Flags.LyricOnly && r.downloadCategory("Covers") && r.Config.Metadata.Artwork.SaveArtist && len(meta.Data[0].Relationships.Artists.Data) > 0 {
 		if meta.Data[0].Relationships.Artists.Data[0].Attributes.Artwork.Url != "" {
 			_, err = r.writeCover(singerFolder, "folder", meta.Data[0].Relationships.Artists.Data[0].Attributes.Artwork.Url)
 			if err != nil {
@@ -820,18 +917,18 @@ func (r *Runner) ripAlbum(albumId string, token string, storefront string, media
 	}
 	if !r.Flags.LyricOnly && (r.Config.Metadata.Extras.SaveArtistExtras || r.Config.Metadata.Artwork.SaveArtistAnimated) && len(meta.Data[0].Relationships.Artists.Data) > 0 {
 		artistID := meta.Data[0].Relationships.Artists.Data[0].ID
-		if err := r.saveArtistDetails(singerFolder, storefront, artistID, token, mediaUserToken); err != nil {
+		if err := r.withSharedAssets(singerFolder, "artist-extra", func(dir string) error { return r.saveArtistDetails(dir, storefront, artistID, token, mediaUserToken) }); err != nil {
 			fmt.Printf("Failed to save artist details: %v\n", err)
 		}
 	}
 	var covPath string
-	if !r.Flags.LyricOnly {
+	if !r.Flags.LyricOnly && r.downloadCategory("Covers") {
 		covPath, err = r.writeCover(albumFolderPath, "cover", meta.Data[0].Attributes.Artwork.URL)
 		if err != nil {
 			fmt.Println("Failed to write cover.")
 		}
 	}
-	if !r.Flags.LyricOnly && r.Config.Metadata.Artwork.SaveReleaseAnimated {
+	if !r.Flags.LyricOnly && r.downloadCategory("Motion Artwork") && r.Config.Metadata.Artwork.SaveReleaseAnimated {
 		if r.Config.Metadata.Extras.SaveReleaseExtras {
 			video := meta.Data[0].Attributes.EditorialVideo
 			frames := []struct {
@@ -845,6 +942,9 @@ func (r *Runner) ripAlbum(albumId string, token string, storefront string, media
 				{"wide", video.MotionWide.PreviewFrame.URL, video.MotionWide.PreviewFrame.Width, video.MotionWide.PreviewFrame.Height},
 			}
 			for _, frame := range frames {
+				if !r.Config.Metadata.Extras.OrientationMotionPreviews && isOrientationMotionPreview(frame.name) {
+					continue
+				}
 				if frame.url == "" {
 					continue
 				}
@@ -853,16 +953,22 @@ func (r *Runner) ripAlbum(albumId string, token string, storefront string, media
 					fmt.Printf("Failed to create album extras folder: %v\n", err)
 					break
 				}
-				if err := r.saveMotionPreviewFrame(dir, frame.name, frame.url, frame.width, frame.height, "Album"); err != nil {
+				if err := r.withSharedAssets(dir, "", func(shared string) error {
+					return r.saveMotionPreviewFrame(shared, frame.name, frame.url, frame.width, frame.height, "Album", true)
+				}); err != nil {
 					fmt.Printf("Failed to save album preview frame: %v\n", err)
 				}
 			}
 		}
-		r.saveAnimatedArtwork(
-			albumFolderPath,
-			meta.Data[0].Attributes.EditorialVideo.MotionDetailSquare.Video,
-			meta.Data[0].Attributes.EditorialVideo.MotionDetailTall.Video,
-		)
+		if err := r.withSharedAssets(albumFolderPath, "", func(dir string) error {
+			r.saveAnimatedArtwork(dir, meta.Data[0].Attributes.EditorialVideo.MotionDetailSquare.Video, meta.Data[0].Attributes.EditorialVideo.MotionDetailTall.Video)
+			return nil
+		}); err != nil {
+			fmt.Printf("Failed to link album artwork: %v\n", err)
+		}
+	}
+	if r.wantsRefresh("Audio") && covPath == "" {
+		covPath = existingCoverPath(albumFolderPath)
 	}
 	for i := range album.Tracks {
 		album.Tracks[i].CoverPath = covPath
@@ -1057,28 +1163,47 @@ func (r *Runner) ripPlaylist(playlistId string, token string, storefront string,
 	if err != nil {
 		return err
 	}
+	if err := r.registerSharedAssetDir(playlistFolderPath, filepath.Join(r.Config.Paths.Master, "Playlists", assetFolderName(r.LimitString(meta.Data[0].Attributes.Name), playlistId))); err != nil {
+		return err
+	}
 	playlist.SaveName = playlistFolder
 	fmt.Println(playlistFolder)
-	if !r.Flags.LyricOnly && r.Config.Metadata.Extras.SaveReleaseExtras {
-		if err := saveFullPlaylistInfo(playlistFolderPath, &meta.Data[0]); err != nil {
+	if !r.Flags.LyricOnly && r.Config.Metadata.Extras.SaveReleaseExtras && r.downloadCategory("Album information") {
+		if err := r.withSharedAssets(playlistFolderPath, "release-extra", func(dir string) error {
+			if r.wantsRefresh("Album information") {
+				content, err := renderPlaylistInfo(&meta.Data[0])
+				if err != nil {
+					return err
+				}
+				extra := filepath.Join(dir, "release-extra")
+				if err := os.MkdirAll(extra, 0755); err != nil {
+					return err
+				}
+				return writeChangedAsset(filepath.Join(extra, "release-info.txt"), []byte(content))
+			}
+			return saveFullPlaylistInfo(dir, &meta.Data[0])
+		}); err != nil {
 			fmt.Printf("Failed to save playlist information: %v\n", err)
 		}
 	}
 	var covPath string
-	if !r.Flags.LyricOnly {
+	if !r.Flags.LyricOnly && r.downloadCategory("Covers") {
 		covPath, err = r.writeCover(playlistFolderPath, "cover", meta.Data[0].Attributes.Artwork.URL)
 		if err != nil {
 			fmt.Println("Failed to write cover.")
 		}
 	}
 
+	if r.wantsRefresh("Audio") && covPath == "" {
+		covPath = existingCoverPath(playlistFolderPath)
+	}
 	for i := range playlist.Tracks {
 		playlist.Tracks[i].CoverPath = covPath
 		playlist.Tracks[i].SaveDir = playlistFolderPath
 		playlist.Tracks[i].Codec = Codec
 	}
 
-	if !r.Flags.LyricOnly && r.Config.Metadata.Artwork.SaveReleaseAnimated {
+	if !r.Flags.LyricOnly && r.downloadCategory("Motion Artwork") && r.Config.Metadata.Artwork.SaveReleaseAnimated {
 		if r.Config.Metadata.Extras.SaveReleaseExtras {
 			video := meta.Data[0].Attributes.EditorialVideo
 			frames := []struct {
@@ -1092,6 +1217,9 @@ func (r *Runner) ripPlaylist(playlistId string, token string, storefront string,
 				{"wide", video.MotionWide.PreviewFrame.URL, video.MotionWide.PreviewFrame.Width, video.MotionWide.PreviewFrame.Height},
 			}
 			for _, frame := range frames {
+				if !r.Config.Metadata.Extras.OrientationMotionPreviews && isOrientationMotionPreview(frame.name) {
+					continue
+				}
 				if frame.url == "" {
 					continue
 				}
@@ -1100,7 +1228,9 @@ func (r *Runner) ripPlaylist(playlistId string, token string, storefront string,
 					fmt.Printf("Failed to create release extras folder: %v\n", err)
 					break
 				}
-				if err := r.saveMotionPreviewFrame(dir, frame.name, frame.url, frame.width, frame.height, "Playlist"); err != nil {
+				if err := r.withSharedAssets(dir, "", func(shared string) error {
+					return r.saveMotionPreviewFrame(shared, frame.name, frame.url, frame.width, frame.height, "Playlist", true)
+				}); err != nil {
 					fmt.Printf("Failed to save playlist preview frame: %v\n", err)
 				}
 			}
@@ -1113,7 +1243,9 @@ func (r *Runner) ripPlaylist(playlistId string, token string, storefront string,
 		if tall == "" {
 			tall = video.MotionTall.Video
 		}
-		r.saveAnimatedArtwork(playlistFolderPath, square, tall)
+		if err := r.withSharedAssets(playlistFolderPath, "", func(dir string) error { r.saveAnimatedArtwork(dir, square, tall); return nil }); err != nil {
+			fmt.Printf("Failed to link playlist artwork: %v\n", err)
+		}
 	}
 	trackTotal := len(meta.Data[0].Relationships.Tracks.Data)
 	arr := make([]int, trackTotal)

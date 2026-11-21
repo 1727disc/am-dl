@@ -44,50 +44,24 @@ func (r *Runner) saveArtistDetails(artistDir, storefront, artistID, token, media
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create artist-extra folder: %w", err)
 	}
+
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return err
 	}
 	videoKey := artistVideoAttempt{directory: absDir, storefront: storefront, artistID: artistID}
-	checkVideos := cfg.SaveArtistAnimated && !r.artistVideoAttempts[videoKey]
-	logoExists, err := fileExists(filepath.Join(dir, "logo.png"))
-	if err != nil {
-		return err
-	}
-	bioExists, err := fileExists(filepath.Join(dir, "biography.txt"))
-	if err != nil {
-		return err
-	}
-	colorsExist, err := fileExists(filepath.Join(dir, "colors.json"))
-	if err != nil {
-		return err
-	}
-	allVideosExist := true
-	if checkVideos {
-		for _, variant := range artistVideoVariants {
-			exists, err := fileExists(filepath.Join(dir, variant.name+"_animated_artwork.mp4"))
-			if err != nil {
-				return err
-			}
-			allVideosExist = allVideosExist && exists
-			if r.Config.Metadata.Extras.SaveArtistExtras {
-				frameExists, err := fileExists(filepath.Join(dir, variant.name+"_preview_frame.png"))
-				if err != nil {
-					return err
-				}
-				allVideosExist = allVideosExist && frameExists
-			}
-		}
-	}
-	if (!r.Config.Metadata.Extras.SaveArtistExtras || (logoExists && bioExists && colorsExist)) && (!checkVideos || allVideosExist) {
+	checkVideos := cfg.SaveArtistAnimated && r.downloadCategory("Motion Artwork") && !r.artistVideoAttempts[videoKey]
+	checkInfo := r.Config.Metadata.Extras.SaveArtistExtras && r.downloadCategory("Artist information") && !r.artistInfoAttempts[videoKey]
+	if !checkVideos && !checkInfo {
 		return nil
 	}
+
 	artist, err := ampapi.GetArtistMetadata(storefront, artistID, r.Config.General.Language, token, mediaUserToken)
 	if err != nil {
 		return err
 	}
 	var failures []error
-	if r.Config.Metadata.Extras.SaveArtistExtras && !logoExists {
+	if checkInfo {
 		logo := artist.EditorialArtwork.Logo
 		if err := r.saveArtistLogo(dir, logo.URL, logo.Width, logo.Height); err != nil {
 			failures = append(failures, fmt.Errorf("logo: %w", err))
@@ -101,30 +75,38 @@ func (r *Runner) saveArtistDetails(artistDir, storefront, artistID, token, media
 		for _, variant := range artistVideoVariants {
 			frame := artist.EditorialVideo[variant.key].PreviewFrame
 			if r.Config.Metadata.Extras.SaveArtistExtras && frame.URL != "" {
-				if err := r.saveMotionPreviewFrame(dir, variant.name, frame.URL, frame.Width, frame.Height, "Artist"); err != nil {
+				if err := r.saveMotionPreviewFrame(dir, variant.name, frame.URL, frame.Width, frame.Height, "Artist", false); err != nil {
 					failures = append(failures, fmt.Errorf("%s preview frame: %w", variant.name, err))
 				}
 			}
 			if video := artist.EditorialVideo[variant.key].Video; video != "" {
-				if err := r.downloadAnimatedArtwork(dir, variant.name, video); err != nil {
+				if err := r.downloadAnimatedArtwork(dir, variant.name, video, false); err != nil {
 					failures = append(failures, fmt.Errorf("%s video: %w", variant.name, err))
 				}
 			}
 		}
 	}
-	if r.Config.Metadata.Extras.SaveArtistExtras {
-		if !colorsExist && artist.KeyColor != "" {
+	if checkInfo {
+		if r.artistInfoAttempts == nil {
+			r.artistInfoAttempts = make(map[artistVideoAttempt]bool)
+		}
+		r.artistInfoAttempts[videoKey] = true
+		if artist.KeyColor != "" {
 			colors, err := json.MarshalIndent(struct {
 				KeyColor string `json:"keyColor"`
 			}{artist.KeyColor}, "", "  ")
 			if err == nil {
-				err = writeFileIfAbsent(filepath.Join(dir, "colors.json"), append(colors, '\n'))
+				if r.wantsRefresh("Artist information") {
+					err = writeChangedAsset(filepath.Join(dir, "colors.json"), append(colors, '\n'))
+				} else {
+					err = writeFileIfAbsent(filepath.Join(dir, "colors.json"), append(colors, '\n'))
+				}
 			}
 			if err != nil {
 				failures = append(failures, fmt.Errorf("colors: %w", err))
 			}
 		}
-		if !bioExists {
+		{
 			var lines []string
 			if artist.Name != "" {
 				lines = append(lines, artist.Name)
@@ -150,7 +132,13 @@ func (r *Runner) saveArtistDetails(artistDir, storefront, artistID, token, media
 				lines = append(lines, "", artist.ArtistBio)
 			}
 			if artist.ArtistBio != "" || artist.BornOrFormed != "" || artist.Origin != "" || len(artist.GenreNames) > 0 {
-				if err := writeFileIfAbsent(filepath.Join(dir, "biography.txt"), []byte(strings.Join(lines, "\n")+"\n")); err != nil {
+				var err error
+				if r.wantsRefresh("Artist information") {
+					err = writeChangedAsset(filepath.Join(dir, "biography.txt"), []byte(strings.Join(lines, "\n")+"\n"))
+				} else {
+					err = writeFileIfAbsent(filepath.Join(dir, "biography.txt"), []byte(strings.Join(lines, "\n")+"\n"))
+				}
+				if err != nil {
 					failures = append(failures, fmt.Errorf("biography: %w", err))
 				}
 			}

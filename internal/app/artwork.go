@@ -24,15 +24,20 @@ func artworkFFmpegError(output []byte) string {
 
 func (r *Runner) saveAnimatedArtwork(dir string, squareVideoURL string, tallVideoURL string) {
 	if squareVideoURL != "" {
-		if err := r.downloadAnimatedArtwork(dir, "square", squareVideoURL); err != nil {
+		if err := r.downloadAnimatedArtwork(dir, "square", squareVideoURL, true); err != nil {
 			fmt.Printf("no motion video square: %v\n", err)
 		}
-		if r.Config.Metadata.Artwork.EmbyAnimated {
+		squarePath := filepath.Join(dir, "square_animated_artwork.mp4")
+		squareExists, squareErr := fileExists(squarePath)
+		if squareErr != nil {
+			fmt.Printf("check animated artwork: %v\n", squareErr)
+		}
+		if r.Config.Metadata.Artwork.EmbyAnimated && squareExists {
 			gifExists, gifErr := fileExists(filepath.Join(dir, "folder.jpg"))
 			if gifErr != nil {
 				fmt.Printf("check animated artwork gif: %v\n", gifErr)
 			} else if !gifExists {
-				cmd := exec.Command("ffmpeg", "-i", filepath.Join(dir, "square_animated_artwork.mp4"), "-vf", "scale=440:-1", "-r", "24", "-f", "gif", filepath.Join(dir, "folder.jpg"))
+				cmd := exec.Command("ffmpeg", "-i", squarePath, "-vf", "scale=440:-1", "-r", "24", "-f", "gif", filepath.Join(dir, "folder.jpg"))
 				if err := cmd.Run(); err != nil {
 					fmt.Printf("animated artwork square to gif err: %v\n", err)
 				}
@@ -40,20 +45,24 @@ func (r *Runner) saveAnimatedArtwork(dir string, squareVideoURL string, tallVide
 		}
 	}
 	if tallVideoURL != "" {
-		if err := r.downloadAnimatedArtwork(dir, "tall", tallVideoURL); err != nil {
+		if err := r.downloadAnimatedArtwork(dir, "tall", tallVideoURL, true); err != nil {
 			fmt.Printf("no motion video tall: %v\n", err)
 		}
 	}
 }
 
-func (r *Runner) downloadAnimatedArtwork(dir string, orientation string, videoURL string) error {
+func (r *Runner) downloadAnimatedArtwork(dir string, orientation string, videoURL string, deduplicate bool) error {
+	if deduplicate {
+		if err := deduplicateMotionFiles(dir, "_animated_artwork.mp4"); err != nil {
+			return err
+		}
+	}
 	output := filepath.Join(dir, orientation+"_animated_artwork.mp4")
 	exists, err := fileExists(output)
 	if err != nil {
 		return fmt.Errorf("check existing artwork: %w", err)
 	}
-	if exists {
-		fmt.Printf("Animated artwork %s already exists locally.\n", orientation)
+	if exists && !r.wantsRefresh("Motion Artwork") {
 		return nil
 	}
 	videoURL, err = r.extractVideo(videoURL)
@@ -86,8 +95,30 @@ func (r *Runner) downloadAnimatedArtwork(dir string, orientation string, videoUR
 		}
 		return fmt.Errorf("download animated artwork: %w", runErr)
 	}
-	if err := os.Rename(tmpPath, output); err != nil {
-		return fmt.Errorf("save animated artwork: %w", err)
+	if exists || !deduplicate {
+		changed, err := updateAssetFromTemp(tmpPath, output)
+		if err != nil {
+			return fmt.Errorf("save animated artwork: %w", err)
+		}
+		if deduplicate {
+			if err := deduplicateMotionFiles(dir, "_animated_artwork.mp4"); err != nil {
+				return err
+			}
+		}
+		if changed {
+			fmt.Printf("Animation Artwork %s Downloaded\n", orientation)
+		} else {
+			fmt.Printf("Animation artwork %s is up to date.\n", orientation)
+		}
+		return nil
+	}
+	saved, err := saveUniqueMotionFile(tmpPath, output, "_animated_artwork.mp4")
+	if err != nil {
+		return err
+	}
+	if !saved {
+		fmt.Printf("Animation artwork %s already saved.\n", orientation)
+		return nil
 	}
 	fmt.Printf("Animation Artwork %s Downloaded\n", orientation)
 	return nil
@@ -115,8 +146,54 @@ func (r *Runner) prepareCollectionFolder(base string, displayName string) (strin
 	return folderPath, nil
 }
 
+// prepareAlbumFolder creates a separate folder for a duplicate album when enabled.
+// A runner reuses its chosen folder on retries of the same album.
+func (r *Runner) prepareAlbumFolder(base, name string, version bool) (string, error) {
+	if !version {
+		return r.prepareCollectionFolder(base, name)
+	}
+	name = strings.TrimSpace(strings.TrimSuffix(name, "."))
+	basePath := filepath.Join(base, sanitizeFolderName(name))
+	key, err := filepath.Abs(basePath)
+	if err != nil {
+		return "", err
+	}
+	if existing, ok := r.albumVersionDirs[key]; ok {
+		return existing, nil
+	}
+	if err := os.MkdirAll(base, 0755); err != nil {
+		return "", err
+	}
+	path := basePath
+	if err := os.Mkdir(path, 0755); err != nil {
+		if !os.IsExist(err) {
+			return "", err
+		}
+		stamp := time.Now().Format("2006-01-02 15-04-05")
+		for n := 1; ; n++ {
+			suffix := " [" + stamp + "]"
+			if n > 1 {
+				suffix = fmt.Sprintf(" [%s %d]", stamp, n)
+			}
+			path = basePath + suffix
+			if err := os.Mkdir(path, 0755); err != nil {
+				if os.IsExist(err) {
+					continue
+				}
+				return "", err
+			}
+			break
+		}
+	}
+	if r.albumVersionDirs == nil {
+		r.albumVersionDirs = make(map[string]string)
+	}
+	r.albumVersionDirs[key] = path
+	return path, nil
+}
+
 func (r *Runner) saveM3UPlaylist(dir string, name string, startIdx int) {
-	if !r.Flags.SaveM3U8 || r.Flags.LyricOnly {
+	if !r.Flags.SaveM3U8 || r.Flags.LyricOnly || (r.Flags.Refresh && !r.wantsRefresh("Audio")) {
 		return
 	}
 	if len(r.State.AddedTracks) > startIdx {
@@ -133,4 +210,8 @@ func createDirectory(path string) error {
 		return fmt.Errorf("create directory %s: %w", path, err)
 	}
 	return nil
+}
+
+func isOrientationMotionPreview(name string) bool {
+	return name == "square" || name == "tall"
 }

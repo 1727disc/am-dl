@@ -26,6 +26,9 @@ func Default() Config {
 			},
 		},
 		Paths: PathsConfig{
+			Symlinking:     false,
+			Versioning:     false,
+			Master:         "AM-Master",
 			Alac:           "AM-Lossless",
 			Atmos:          "AM-Atmos",
 			Aac:            "AM-AAC",
@@ -40,7 +43,7 @@ func Default() Config {
 			AppleMaster:    "[M]",
 		},
 		Metadata: MetadataConfig{
-			Extras: ExtrasConfig{SaveReleaseExtras: false},
+			Extras: ExtrasConfig{SaveReleaseExtras: false, OrientationMotionPreviews: true},
 			Lyrics: LyricsConfig{
 				SaveFile: false,
 				Embed:    true,
